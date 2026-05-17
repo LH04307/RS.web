@@ -4,14 +4,15 @@ import threading
 import logging
 import time
 import io
-import gzip
+import json
+import csv
 from datetime import datetime, timedelta, date
 from pathlib import Path
 
 import requests
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, Response
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -21,11 +22,16 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 DB  = Path("/tmp/rs.db")
 
-NASDAQ_URL     = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
-NYSE_URL       = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
-BENCHMARK      = "SPY"
-POLYGON_TOKEN  = os.environ.get("POLYGON_TOKEN", "")
-POLYGON_BASE   = "https://api.polygon.io"
+NASDAQ_URL    = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+NYSE_URL      = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+BENCHMARK     = "SPY"
+POLYGON_TOKEN = os.environ.get("POLYGON_TOKEN", "")
+POLYGON_BASE  = "https://api.polygon.io"
+
+# We need 252 trading days for the IBD RS formula.
+# We ask for 260 to have a small buffer for any missing data.
+# Polygon only returns actual trading days so no weekend/holiday noise.
+TARGET_TRADING_DAYS = 260
 
 _prog = {"pct": 0, "msg": "Idle", "running": False, "error": None}
 _lock = threading.Lock()
@@ -44,15 +50,51 @@ def init_db():
         rs INTEGER, rs_mkt REAL, price REAL,
         d1 REAL, m1 REAL, m3 REAL, y1 REAL, updated TEXT)""")
     con.execute("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)")
+    # Price cache: one row per trading day, prices as JSON
+    con.execute("""CREATE TABLE IF NOT EXISTS price_cache (
+        trade_date TEXT PRIMARY KEY,
+        prices     TEXT)""")
     con.commit()
     con.close()
 
 # ── Ticker universe ───────────────────────────────────────────────────────────
+# Words that identify non-stock securities to exclude
+EXCLUDE_WORDS = [
+    "ETF", "FUND", "TRUST", "WARRANT", "WARRANTS", "RIGHT", "RIGHTS",
+    "UNIT", "UNITS", "NOTE", "NOTES", "DEBENTURE", "PREFERRED",
+    "ACQUISITION", "BLANK CHECK", "TEST", "SYMBOL",
+]
+EXCLUDE_SUFFIXES = ["W", "R", "U", "Z"]  # warrant, right, unit, temp suffixes
+
+def is_valid_stock(sym, name):
+    """Filter out ETFs, warrants, rights, units, and other non-stocks."""
+    sym  = str(sym).strip()
+    name = str(name).upper()
+
+    # Length check — real stocks are 1-5 chars, but 5-char often warrants
+    if not sym or len(sym) > 5:
+        return False
+
+    # Common non-stock symbol patterns
+    if any(c in sym for c in [".", "$", "+", "^", "-"]):
+        return False
+
+    # Warrants/rights often end in W, R (after 4+ char base)
+    if len(sym) == 5 and sym[-1] in EXCLUDE_SUFFIXES:
+        return False
+
+    # Name-based exclusions
+    for word in EXCLUDE_WORDS:
+        if word in name:
+            return False
+
+    return True
+
 def get_tickers():
     tickers = []
     for url, exch_map in [
         (NASDAQ_URL, {"": "NASDAQ"}),
-        (NYSE_URL,   {"N": "NYSE", "A": "NYSE MKT"}),
+        (NYSE_URL,   {"N": "NYSE", "A": "NYSE American"}),
     ]:
         try:
             r = requests.get(url, timeout=15)
@@ -60,29 +102,35 @@ def get_tickers():
             if "Symbol" in df.columns:
                 df = df.rename(columns={"Symbol": "sym", "Security Name": "name"})
                 df["exch"] = "NASDAQ"
+                # NASDAQ file has ETF column
+                if "ETF" in df.columns:
+                    df = df[df["ETF"].astype(str).str.strip() != "Y"]
             else:
                 df = df.rename(columns={"ACT Symbol": "sym", "Security Name": "name"})
                 df["exch"] = df["Exchange"].map(exch_map)
                 df = df[df["exch"].notna()]
+                # NYSE file has ETF column too
+                if "ETF" in df.columns:
+                    df = df[df["ETF"].astype(str).str.strip() != "Y"]
+
             df = df[df["sym"].notna()]
-            df = df[~df["sym"].astype(str).str.contains(r"[.\$\+\^]", regex=True)]
-            df = df[df["sym"].astype(str).str.len() <= 5]
             df = df[~df["sym"].astype(str).str.startswith("File")]
+            df = df[df.apply(lambda r: is_valid_stock(r["sym"], r["name"]), axis=1)]
             df = df[["sym", "name", "exch"]].drop_duplicates("sym")
             tickers.append(df)
         except Exception as e:
             log.warning(f"Ticker fetch error: {e}")
+
     if not tickers:
         return pd.DataFrame(columns=["sym","name","exch"])
     return pd.concat(tickers).drop_duplicates("sym").reset_index(drop=True)
 
-# ── RS calculation ────────────────────────────────────────────────────────────
+# ── RS calculation (IBD formula) ──────────────────────────────────────────────
 def pct(s, n):
     if len(s) < n + 1: return np.nan
     return (s.iloc[-1] / s.iloc[-n-1]) - 1
 
 def composite(s):
-    # IBD formula: 0.4*ROC(63) + 0.2*ROC(126) + 0.2*ROC(189) + 0.2*ROC(252)
     q1 = pct(s, 63)
     q2 = pct(s, 126) if len(s) > 126 else np.nan
     q3 = pct(s, 189) if len(s) > 189 else np.nan
@@ -93,86 +141,78 @@ def composite(s):
     tw = sum(w for _,w in good)
     return sum(v*(w/tw) for v,w in good)
 
-# ── Polygon bulk flat-file download ──────────────────────────────────────────
-def get_trading_dates(n_days=380):
-    """Get list of recent trading dates to fetch."""
-    dates = []
-    d = datetime.utcnow().date() - timedelta(days=1)
-    while len(dates) < n_days:
-        # Skip weekends
-        if d.weekday() < 5:
-            dates.append(d)
-        d -= timedelta(days=1)
-    return sorted(dates)
-
-def fetch_day(trading_date):
+# ── Polygon helpers ───────────────────────────────────────────────────────────
+def fetch_day_polygon(trading_date):
     """
-    Fetch all US stock prices for a single trading date using
-    Polygon's grouped daily endpoint — one call, entire market.
-    Returns DataFrame with columns: symbol, close (adjusted)
+    One API call = entire US market prices for that trading day.
+    Polygon only has data for real trading days — no weekends or holidays.
+    Returns dict {symbol: adj_close} or None.
     """
-    ds = trading_date.strftime("%Y-%m-%d")
+    ds  = trading_date.strftime("%Y-%m-%d")
     url = (f"{POLYGON_BASE}/v2/aggs/grouped/locale/us/market/stocks/{ds}"
            f"?adjusted=true&apiKey={POLYGON_TOKEN}")
     try:
         r = requests.get(url, timeout=30)
         if r.status_code == 403:
-            log.error("Polygon API key invalid or unauthorized")
+            log.error("Polygon: invalid API key")
             return None
         if r.status_code == 429:
-            log.warning("Polygon rate limit — sleeping 60s")
-            time.sleep(60)
+            log.warning("Polygon rate limit — sleeping 65s")
+            time.sleep(65)
             r = requests.get(url, timeout=30)
         if r.status_code != 200:
             log.warning(f"Polygon {ds}: HTTP {r.status_code}")
             return None
-
         data = r.json()
-        if data.get("resultsCount", 0) == 0 or not data.get("results"):
-            log.info(f"No results for {ds} (likely market holiday)")
+        if not data.get("results"):
+            log.info(f"{ds}: no results (market holiday or future date)")
             return None
-
-        df = pd.DataFrame(data["results"])
-        # 'T' = ticker, 'c' = close price
-        df = df[["T", "c"]].rename(columns={"T": "symbol", "c": "close"})
-        df = df.dropna()
-        return df
-
+        return {item["T"]: item["c"] for item in data["results"]
+                if "T" in item and "c" in item}
     except Exception as e:
-        log.warning(f"Polygon fetch error for {ds}: {e}")
+        log.warning(f"Polygon fetch error {ds}: {e}")
         return None
 
-def build_price_matrix():
-    """
-    Download ~252 trading days of data using Polygon grouped daily endpoint.
-    Returns a DataFrame: rows=dates, columns=symbols, values=adjusted close.
-    Each date = 1 API call. Total: ~252 calls for a full year.
-    """
-    dates = get_trading_dates(380)  # get extra to ensure 252 trading days
-    frames = {}
-    total = len(dates)
+# ── Price cache ───────────────────────────────────────────────────────────────
+def load_cached_dates():
+    con = sqlite3.connect(DB)
+    rows = con.execute("SELECT trade_date FROM price_cache ORDER BY trade_date").fetchall()
+    con.close()
+    return [r[0] for r in rows]
 
-    for i, d in enumerate(dates):
-        pct_done = 10 + (i / total) * 70
-        if i % 10 == 0:
-            set_prog(pct_done, f"Downloading market data: {d}  ({i+1}/{total} days)…")
+def save_day_to_cache(trade_date_str, prices_dict):
+    con = sqlite3.connect(DB)
+    con.execute("INSERT OR REPLACE INTO price_cache VALUES (?,?)",
+                (trade_date_str, json.dumps(prices_dict)))
+    con.commit()
+    con.close()
 
-        df = fetch_day(d)
-        if df is not None:
-            frames[d] = df.set_index("symbol")["close"]
+def prune_old_cache(keep_n_days):
+    """Keep only the most recent keep_n_days trading days."""
+    con = sqlite3.connect(DB)
+    rows = con.execute(
+        "SELECT trade_date FROM price_cache ORDER BY trade_date DESC").fetchall()
+    if len(rows) > keep_n_days:
+        cutoff = rows[keep_n_days - 1][0]
+        deleted = con.execute(
+            "DELETE FROM price_cache WHERE trade_date < ?", (cutoff,)).rowcount
+        log.info(f"Pruned {deleted} old cache rows, keeping {keep_n_days} days")
+    con.commit()
+    con.close()
 
-        # Polygon free tier: 5 calls/minute — stay safe at 4/min
-        time.sleep(15)
-
-    if not frames:
+def load_price_matrix(valid_syms):
+    con = sqlite3.connect(DB)
+    rows = con.execute(
+        "SELECT trade_date, prices FROM price_cache ORDER BY trade_date").fetchall()
+    con.close()
+    if not rows:
         return None
-
-    # Build matrix: index=date, columns=symbol
+    frames = {d: json.loads(p) for d, p in rows}
     matrix = pd.DataFrame(frames).T
     matrix.index = pd.to_datetime(matrix.index)
     matrix = matrix.sort_index()
-    log.info(f"Price matrix: {len(matrix)} days x {len(matrix.columns)} symbols")
-    return matrix
+    keep = [c for c in matrix.columns if c in valid_syms or c == BENCHMARK]
+    return matrix[keep]
 
 # ── Full refresh ──────────────────────────────────────────────────────────────
 def run_refresh():
@@ -193,29 +233,78 @@ def _do_refresh():
         return
 
     set_prog(0, "Fetching ticker universe…")
-    universe = get_tickers()
+    universe   = get_tickers()
     valid_syms = set(universe["sym"].tolist())
-    log.info(f"Universe: {len(valid_syms)} tickers")
+    log.info(f"Universe: {len(valid_syms)} stocks (ETFs and warrants excluded)")
 
-    set_prog(10, "Downloading market data from Polygon (this takes ~1 hour on free tier)…")
-    matrix = build_price_matrix()
+    today    = datetime.utcnow().date()
+    # Don't fetch today until after 10pm UTC (~6pm ET, well after market close)
+    end_date = today if datetime.utcnow().hour >= 22 else today - timedelta(days=1)
+
+    cached_dates = load_cached_dates()
+
+    if not cached_dates:
+        # ── FIRST RUN: download full history ─────────────────────────────────
+        # Start from enough days back to get TARGET_TRADING_DAYS
+        # Since Polygon skips weekends/holidays naturally, we go back
+        # ~1.4x target to be safe (365 calendar days ≈ 252 trading days)
+        start_date = today - timedelta(days=370)
+        mode = "full"
+        log.info(f"First run: downloading from {start_date} to {end_date}")
+    else:
+        last_cached = date.fromisoformat(cached_dates[-1])
+        if last_cached >= end_date:
+            set_prog(5, "Cache is current — recomputing ratings…")
+            mode = "compute_only"
+            start_date = None
+        else:
+            start_date = last_cached + timedelta(days=1)
+            mode = "incremental"
+            log.info(f"Incremental: fetching {start_date} to {end_date}")
+
+    # ── Download missing dates ────────────────────────────────────────────────
+    if mode in ("full", "incremental"):
+        # Build list of weekdays to try
+        dates_to_try = []
+        d = start_date
+        while d <= end_date:
+            if d.weekday() < 5:
+                dates_to_try.append(d)
+            d += timedelta(days=1)
+
+        total = len(dates_to_try)
+        if mode == "full":
+            set_prog(5, f"First run: downloading ~{total} trading days. This takes ~{total//4} minutes…")
+        else:
+            set_prog(5, f"Fetching {total} new day(s)…")
+
+        for i, d in enumerate(dates_to_try):
+            pct_done = 5 + (i / max(total, 1)) * 72
+            set_prog(pct_done, f"Downloading {d}  ({i+1}/{total})…")
+            prices = fetch_day_polygon(d)
+            if prices:
+                save_day_to_cache(d.isoformat(), prices)
+            # Polygon free tier: 5 calls/min → 13s between calls
+            if i < total - 1:
+                time.sleep(13)
+
+        # Keep rolling window at TARGET_TRADING_DAYS
+        prune_old_cache(TARGET_TRADING_DAYS)
+
+    # ── Build matrix and compute ratings ─────────────────────────────────────
+    set_prog(80, "Loading price matrix…")
+    matrix = load_price_matrix(valid_syms)
 
     if matrix is None or matrix.empty:
-        set_prog(100, "Error: could not download market data from Polygon.")
+        set_prog(100, "Error: no price data in cache.")
         return
 
-    set_prog(82, f"Computing RS ratings for {len(matrix.columns)} symbols…")
+    log.info(f"Matrix: {len(matrix)} trading days x {len(matrix.columns)} symbols")
+    set_prog(84, f"Computing RS ratings for {len(matrix.columns)} symbols…")
 
-    # Filter to only NASDAQ/NYSE stocks we care about
-    # (Polygon returns all US stocks including OTC etc)
-    valid_cols = [c for c in matrix.columns if c in valid_syms]
-    matrix = matrix[valid_cols + ([BENCHMARK] if BENCHMARK in matrix.columns else [])]
-    log.info(f"Filtered matrix: {len(matrix.columns)} symbols")
-
-    # Compute composite scores
     scores = {}
     for sym in matrix.columns:
-        s = matrix[sym].dropna()
+        s     = matrix[sym].dropna()
         score = composite(s)
         if not np.isnan(score):
             scores[sym] = score
@@ -224,48 +313,37 @@ def _do_refresh():
         set_prog(100, "Error: could not compute any RS scores.")
         return
 
-    # Benchmark
     bench_score = scores.get(BENCHMARK, 0.0)
+    series      = pd.Series(scores)
+    ranked      = (series.rank(pct=True)*98+1).clip(1,99).round(0).astype(int)
+    spy_pct     = float((series < bench_score).mean()*98+1)
 
-    # Rank 1-99
-    series = pd.Series(scores)
-    ranked = (series.rank(pct=True)*98+1).clip(1,99).round(0).astype(int)
-    spy_pct = float((series < bench_score).mean()*98+1)
-
-    set_prog(90, "Calculating performance metrics…")
-
-    # Price and performance metrics
-    def safe_pct(sym, n):
-        s = matrix[sym].dropna()
-        v = pct(s, n)
-        return round(v*100, 2) if not np.isnan(v) else None
-
-    set_prog(94, "Saving to database…")
+    set_prog(94, "Saving ratings to database…")
     info = universe.set_index("sym")
     now  = datetime.utcnow().isoformat()
     rows = []
 
     for sym, rs in ranked.items():
-        if sym == BENCHMARK:
-            continue
-        if sym not in valid_syms:
+        if sym == BENCHMARK or sym not in valid_syms:
             continue
         r = info.loc[sym] if sym in info.index else pd.Series({"name":"","exch":""})
-        last_price = matrix[sym].dropna().iloc[-1] if sym in matrix.columns else None
+        s = matrix[sym].dropna()
+        last_price = float(s.iloc[-1]) if len(s) else None
         rows.append((
             sym,
-            r.get("name", ""),
-            r.get("exch", ""),
+            r.get("name",""),
+            r.get("exch",""),
             int(rs),
             round(float(rs) - spy_pct, 1),
-            round(float(last_price), 2) if last_price else None,
-            safe_pct(sym, 1),
-            safe_pct(sym, 21),
-            safe_pct(sym, 63),
-            safe_pct(sym, 252),
+            round(last_price, 2) if last_price else None,
+            round(pct(s,1)*100,   2) if not np.isnan(pct(s,1))   else None,
+            round(pct(s,21)*100,  2) if not np.isnan(pct(s,21))  else None,
+            round(pct(s,63)*100,  2) if not np.isnan(pct(s,63))  else None,
+            round(pct(s,252)*100, 2) if not np.isnan(pct(s,252)) else None,
             now
         ))
 
+    cached_count = len(load_cached_dates())
     con = sqlite3.connect(DB)
     con.execute("DELETE FROM stocks")
     con.executemany("""INSERT OR REPLACE INTO stocks
@@ -273,28 +351,25 @@ def _do_refresh():
         VALUES(?,?,?,?,?,?,?,?,?,?,?)""", rows)
     con.execute("INSERT OR REPLACE INTO meta VALUES('updated',?)", (now,))
     con.execute("INSERT OR REPLACE INTO meta VALUES('total',?)",   (str(len(rows)),))
+    con.execute("INSERT OR REPLACE INTO meta VALUES('cached_days',?)", (str(cached_count),))
+    con.execute("INSERT OR REPLACE INTO meta VALUES('mode',?)", (mode,))
     con.commit()
     con.close()
-    set_prog(100, f"Done! Rated {len(rows)} stocks.")
+    set_prog(100, f"Done! Rated {len(rows)} stocks using {cached_count} trading days of data.")
 
 # ── API routes ────────────────────────────────────────────────────────────────
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-@app.route("/api/ratings")
-def api_ratings():
-    if not DB.exists():
-        return jsonify({"rows":[],"total":0,"meta":{}})
-    page  = max(1, int(request.args.get("page",1)))
-    pp    = min(500, max(10, int(request.args.get("per_page",100))))
-    col   = request.args.get("sort","rs")
-    dire  = "ASC" if request.args.get("dir","desc")=="asc" else "DESC"
-    q     = request.args.get("q","").strip()
-    exch  = request.args.get("exchange","all")
-    minrs = request.args.get("min_rs")
-    maxrs = request.args.get("max_rs")
-    minp  = request.args.get("min_price")
+def build_query(request_args):
+    """Parse filter params and return (conditions, params) for SQL WHERE."""
+    col   = request_args.get("sort","rs")
+    dire  = "ASC" if request_args.get("dir","desc")=="asc" else "DESC"
+    q     = request_args.get("q","").strip()
+    exch  = request_args.get("exchange","all")
+    minrs = request_args.get("min_rs")
+    maxrs = request_args.get("max_rs")
+    minp  = request_args.get("min_price")
+    maxp  = request_args.get("max_price")
+    miny1 = request_args.get("min_y1")
+    minm3 = request_args.get("min_m3")
 
     safe = {"symbol","name","exchange","rs","rs_mkt","price","d1","m1","m3","y1"}
     if col not in safe: col = "rs"
@@ -305,11 +380,25 @@ def api_ratings():
         params += [f"%{q}%", f"%{q}%"]
     if exch and exch != "all":
         conds.append("exchange=?"); params.append(exch)
-    if minrs: conds.append("rs>=?"); params.append(float(minrs))
-    if maxrs: conds.append("rs<=?"); params.append(float(maxrs))
+    if minrs: conds.append("rs>=?");    params.append(float(minrs))
+    if maxrs: conds.append("rs<=?");    params.append(float(maxrs))
     if minp:  conds.append("price>=?"); params.append(float(minp))
+    if maxp:  conds.append("price<=?"); params.append(float(maxp))
+    if miny1: conds.append("y1>=?");    params.append(float(miny1))
+    if minm3: conds.append("m3>=?");    params.append(float(minm3))
+    return col, dire, " AND ".join(conds), params
 
-    where  = " AND ".join(conds)
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/api/ratings")
+def api_ratings():
+    if not DB.exists():
+        return jsonify({"rows":[],"total":0,"meta":{}})
+    page = max(1, int(request.args.get("page",1)))
+    pp   = min(500, max(10, int(request.args.get("per_page",100))))
+    col, dire, where, params = build_query(request.args)
     offset = (page-1)*pp
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
@@ -321,6 +410,47 @@ def api_ratings():
     meta  = dict(con.execute("SELECT k,v FROM meta").fetchall())
     con.close()
     return jsonify({"rows":[dict(r) for r in rows],"total":total,"meta":meta})
+
+@app.route("/api/export")
+def api_export():
+    """Export current filtered view as CSV."""
+    if not DB.exists():
+        return "No data", 404
+    col, dire, where, params = build_query(request.args)
+    con = sqlite3.connect(DB)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        f"SELECT symbol,name,exchange,rs,rs_mkt,price,d1,m1,m3,y1 "
+        f"FROM stocks WHERE {where} ORDER BY {col} {dire}",
+        params).fetchall()
+    con.close()
+
+    def generate():
+        header = ["Symbol","Company","Exchange","RS Rating","vs SPY",
+                  "Price","1D%","1M%","3M%","1Y%"]
+        yield ",".join(header) + "\n"
+        for r in rows:
+            row = [
+                r["symbol"],
+                f'"{r["name"]}"',
+                r["exchange"],
+                str(r["rs"]) if r["rs"] is not None else "",
+                str(r["rs_mkt"]) if r["rs_mkt"] is not None else "",
+                str(r["price"]) if r["price"] is not None else "",
+                str(r["d1"]) if r["d1"] is not None else "",
+                str(r["m1"]) if r["m1"] is not None else "",
+                str(r["m3"]) if r["m3"] is not None else "",
+                str(r["y1"]) if r["y1"] is not None else "",
+            ]
+            yield ",".join(row) + "\n"
+
+    ts = datetime.utcnow().strftime("%Y%m%d")
+    filename = f"rs_ratings_{ts}.csv"
+    return Response(
+        generate(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={filename}"}
+    )
 
 @app.route("/api/stock/<sym>")
 def api_stock(sym):
@@ -355,16 +485,9 @@ def api_stats():
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 init_db()
-
 sched = BackgroundScheduler()
 sched.add_job(run_refresh, CronTrigger(day_of_week="mon-fri", hour=17, minute=0))
 sched.start()
-
-con = sqlite3.connect(DB)
-has_data = con.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
-con.close()
-if not has_data:
-    log.info("No data — will wait for manual refresh trigger.")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
