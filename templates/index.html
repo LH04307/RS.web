@@ -14,10 +14,11 @@
   --mono:'Courier New',monospace;
 }
 html,body{height:100%;background:var(--bg0);color:var(--t0);font-family:Arial,sans-serif;font-size:13px}
+
 /* HEADER */
 header{height:52px;background:var(--bg1);border-bottom:1px solid var(--border);
-  display:flex;align-items:center;padding:0 18px;gap:16px}
-.logo{font-family:var(--mono);font-weight:bold;font-size:15px;color:var(--t0);
+  display:flex;align-items:center;padding:0 18px;gap:16px;flex-shrink:0}
+.logo{font-family:var(--mono);font-weight:bold;font-size:15px;color:#000;
   background:var(--blue);padding:4px 10px;border-radius:5px}
 .hstats{display:flex;gap:1px;flex:1;margin-left:12px}
 .hs{background:var(--bg2);padding:3px 14px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
@@ -25,7 +26,7 @@ header{height:52px;background:var(--bg1);border-bottom:1px solid var(--border);
 .hs-l{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2)}
 .hs-v{font-family:var(--mono);font-size:13px;font-weight:bold}
 .green{color:var(--green)}.gold{color:var(--gold)}.red{color:var(--red)}
-#lastUp{font-family:var(--mono);font-size:10px;color:var(--t2);margin-left:auto}
+#lastUp{font-family:var(--mono);font-size:10px;color:var(--t2);margin-left:auto;white-space:nowrap}
 .btn{background:var(--blue);color:#fff;border:none;border-radius:5px;padding:7px 14px;
   font-family:var(--mono);font-size:11px;font-weight:bold;cursor:pointer;display:flex;align-items:center;gap:6px}
 .btn:hover{background:#5590ff}.btn:disabled{background:var(--bg3);color:var(--t2);cursor:not-allowed}
@@ -33,37 +34,66 @@ header{height:52px;background:var(--bg1);border-bottom:1px solid var(--border);
   border-radius:50%;display:none;animation:spin .7s linear infinite}
 .btn.loading .spin{display:block}
 @keyframes spin{to{transform:rotate(360deg)}}
+
 /* PROGRESS */
-.prog-wrap{height:3px;background:var(--bg2);display:none}
-.prog-wrap.on{display:block}
-.prog-bar{height:100%;background:var(--blue);transition:width .4s}
-.prog-msg{padding:4px 18px;font-family:var(--mono);font-size:10px;color:var(--t2);
-  background:var(--bg1);border-bottom:1px solid var(--border);display:none}
-.prog-msg.on{display:block}
+.prog-outer{background:var(--bg1);border-bottom:1px solid var(--border);display:none;flex-shrink:0}
+.prog-outer.on{display:block}
+.prog-track{height:4px;background:var(--bg3);position:relative;overflow:hidden}
+.prog-fill{height:100%;background:var(--blue);transition:width .5s ease;position:relative}
+.prog-fill::after{content:'';position:absolute;right:0;top:0;bottom:0;width:60px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.3))}
+.prog-info{display:flex;align-items:center;justify-content:space-between;
+  padding:6px 18px;gap:16px}
+.prog-msg{font-family:var(--mono);font-size:11px;color:var(--t1);flex:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog-right{display:flex;align-items:center;gap:16px;flex-shrink:0}
+.prog-pct{font-family:var(--mono);font-size:18px;font-weight:bold;color:var(--blue);
+  min-width:48px;text-align:right}
+.prog-eta{font-family:var(--mono);font-size:11px;color:var(--t2);white-space:nowrap}
+
 /* CONTROLS */
 .controls{background:var(--bg1);border-bottom:1px solid var(--border);
-  padding:8px 18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2)}
+  padding:8px 18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2);white-space:nowrap}
 input,select{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;
   color:var(--t0);font-family:var(--mono);font-size:11px;padding:5px 9px;outline:none}
 input:focus,select:focus{border-color:var(--blue)}
 input::placeholder{color:var(--t2)}
-.search{width:200px}
-.narrow{width:72px}
+.search{width:180px}
+.narrow{width:68px}
+.sep{width:1px;height:22px;background:var(--border2);margin:0 2px}
+.btn-export{background:var(--bg2);color:var(--green);border:1px solid var(--green);
+  border-radius:5px;padding:5px 12px;font-family:var(--mono);font-size:11px;
+  font-weight:bold;cursor:pointer;text-decoration:none;display:flex;align-items:center;gap:5px}
+.btn-export:hover{background:rgba(30,203,130,.1)}
 .ml{margin-left:auto}
 .rcount{font-family:var(--mono);font-size:11px;color:var(--t2)}
+
+/* PRESETS */
+.presets{background:var(--bg1);border-bottom:1px solid var(--border);
+  padding:6px 18px;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.preset-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2);margin-right:4px}
+.preset{background:var(--bg2);border:1px solid var(--border2);border-radius:20px;
+  padding:4px 14px;font-size:11px;color:var(--t1);cursor:pointer;
+  font-family:var(--mono);font-weight:bold;transition:all .15s}
+.preset:hover{border-color:var(--blue);color:var(--t0)}
+.preset.on{border-color:var(--blue);color:#fff;background:var(--blue)}
+.preset.p70.on{background:#1ecb82;border-color:#1ecb82;color:#000}
+.preset.p80.on{background:var(--gold);border-color:var(--gold);color:#000}
+.preset.p90.on{background:var(--orange);border-color:var(--orange);color:#000}
+
 /* TABLE */
 .tbl-wrap{overflow:auto;flex:1}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 thead{position:sticky;top:0;z-index:4;background:var(--bg2)}
 th{padding:8px 10px;text-align:left;font-family:var(--mono);font-size:10px;font-weight:bold;
-  text-transform:uppercase;letter-spacing:.08em;color:var(--t2);border-bottom:1px solid var(--border);
-  cursor:pointer;user-select:none;white-space:nowrap}
+  text-transform:uppercase;letter-spacing:.08em;color:var(--t2);
+  border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap}
 th:hover{color:var(--t0)}th.act{color:var(--blue)}
-th:nth-child(1),td:nth-child(1){width:56px}
+th:nth-child(1),td:nth-child(1){width:52px}
 th:nth-child(2),td:nth-child(2){width:76px}
 th:nth-child(3),td:nth-child(3){min-width:150px}
-th:nth-child(4),td:nth-child(4){width:90px}
+th:nth-child(4),td:nth-child(4){width:100px}
 th:nth-child(5),td:nth-child(5){width:110px}
 th:nth-child(6),td:nth-child(6){width:90px}
 th:nth-child(7),td:nth-child(7){width:80px}
@@ -78,31 +108,33 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 .sym{color:var(--t0);font-weight:bold;font-size:13px}
 .nm{color:var(--t1);font-family:Arial,sans-serif;font-size:11px}
 .rank{color:var(--t2);font-size:11px}
-/* RS cell */
 .rsc{display:flex;align-items:center;gap:7px}
 .rsbar{flex:1;max-width:44px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden}
 .rsfill{height:100%;border-radius:2px}
 .rsv{font-weight:bold;font-size:13px;min-width:28px;text-align:right}
-/* pct colors */
 .pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--t2)}
+
 /* PAGINATION */
 .pgbar{display:flex;align-items:center;gap:5px;padding:9px 18px;
-  background:var(--bg1);border-top:1px solid var(--border)}
+  background:var(--bg1);border-top:1px solid var(--border);flex-shrink:0}
 .pb{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;
   color:var(--t1);font-family:var(--mono);font-size:11px;padding:3px 9px;cursor:pointer}
 .pb:hover:not(:disabled){border-color:var(--blue);color:var(--t0)}
 .pb.cur{background:var(--blue);border-color:var(--blue);color:#fff}
 .pb:disabled{opacity:.3;cursor:not-allowed}
 .pginfo{font-family:var(--mono);font-size:11px;color:var(--t2);margin-left:auto}
-/* EMPTY */
+
+/* EMPTY / FIRST RUN */
 .empty{display:flex;flex-direction:column;align-items:center;gap:12px;
   padding:80px 20px;color:var(--t2);text-align:center}
 .empty h3{font-size:15px;color:var(--t1)}
-.empty p{font-size:12px;max-width:340px;line-height:1.6}
+.empty p{font-size:12px;max-width:360px;line-height:1.7}
 .btn-big{background:var(--blue);color:#fff;border:none;border-radius:6px;
-  padding:10px 22px;font-family:var(--mono);font-size:12px;font-weight:bold;cursor:pointer;margin-top:6px}
+  padding:10px 22px;font-family:var(--mono);font-size:12px;font-weight:bold;
+  cursor:pointer;margin-top:6px}
 .btn-big:hover{background:#5590ff}
-/* DETAIL */
+
+/* DETAIL PANEL */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:none}
 .overlay.on{display:block}
 .panel{position:fixed;right:0;top:0;bottom:0;width:320px;background:var(--bg1);
@@ -113,8 +145,7 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 .ph-sym{font-family:var(--mono);font-size:20px;font-weight:bold}
 .ph-name{font-size:11px;color:var(--t2);margin-top:3px}
 .ph-exch{font-size:10px;color:var(--blue);font-family:var(--mono);margin-top:3px}
-.close-btn{margin-left:auto;background:none;border:none;color:var(--t2);
-  font-size:18px;cursor:pointer;padding:2px}
+.close-btn{margin-left:auto;background:none;border:none;color:var(--t2);font-size:18px;cursor:pointer}
 .close-btn:hover{color:var(--t0)}
 .pb-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
 .rs-big{background:var(--bg2);border-radius:8px;padding:16px;text-align:center}
@@ -133,17 +164,15 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 .pline{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--border2)}
 .pfill{height:100%;border-radius:3px;position:absolute}
 .pv{font-family:var(--mono);font-size:11px;font-weight:bold;min-width:54px;text-align:right}
-/* TOAST */
+
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(16px);
   background:var(--bg3);border:1px solid var(--border2);border-radius:7px;
   padding:9px 18px;font-family:var(--mono);font-size:12px;
   opacity:0;transition:opacity .2s,transform .2s;z-index:100;pointer-events:none}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
-/* scrollbar */
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg0)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
-/* layout */
 .main{display:flex;flex-direction:column;height:calc(100vh - 52px);overflow:hidden}
 </style>
 </head>
@@ -151,7 +180,7 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 
 <header>
   <div class="logo">RS</div>
-  <span style="font-size:13px;color:var(--t1);font-weight:bold">RS RATER &nbsp;·&nbsp; NASDAQ / NYSE</span>
+  <span style="font-size:13px;color:var(--t1);font-weight:bold">RS RATER &nbsp;·&nbsp; NASDAQ / NYSE / NYSE American</span>
   <div class="hstats">
     <div class="hs"><span class="hs-l">Universe</span><span class="hs-v" id="hTotal">—</span></div>
     <div class="hs"><span class="hs-l">Avg RS</span><span class="hs-v" id="hAvg">—</span></div>
@@ -166,25 +195,43 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 </header>
 
 <div class="main">
-  <div class="prog-wrap" id="pw"><div class="prog-bar" id="pb" style="width:0%"></div></div>
-  <div class="prog-msg" id="pm"></div>
 
+  <!-- PROGRESS BAR WITH % AND ETA -->
+  <div class="prog-outer" id="progOuter">
+    <div class="prog-track">
+      <div class="prog-fill" id="progFill" style="width:0%"></div>
+    </div>
+    <div class="prog-info">
+      <span class="prog-msg" id="progMsg">Starting…</span>
+      <div class="prog-right">
+        <span class="prog-eta" id="progEta"></span>
+        <span class="prog-pct" id="progPct">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- FILTERS -->
   <div class="controls">
     <input class="search" id="sq" placeholder="Search symbol or name…" oninput="dbl()">
+    <div class="sep"></div>
     <span class="lbl">Exchange</span>
     <select id="se" onchange="go(1)">
       <option value="all">All</option>
       <option value="NASDAQ">NASDAQ</option>
       <option value="NYSE">NYSE</option>
-      <option value="NYSE MKT">NYSE MKT</option>
+      <option value="NYSE American">NYSE American</option>
     </select>
+    <div class="sep"></div>
     <span class="lbl">RS</span>
-    <input class="narrow" id="mn" type="number" placeholder="Min" oninput="dbl()">
-    <input class="narrow" id="mx" type="number" placeholder="Max" oninput="dbl()">
-    <span class="lbl">Price ≥</span>
-    <input class="narrow" id="mp" type="number" placeholder="$5" oninput="dbl()">
+    <input class="narrow" id="mn" type="number" placeholder="Min" min="1" max="99" oninput="dbl()">
+    <input class="narrow" id="mx" type="number" placeholder="Max" min="1" max="99" oninput="dbl()">
+    <div class="sep"></div>
+    <span class="lbl">Price</span>
+    <input class="narrow" id="minp" type="number" placeholder="Min $" oninput="dbl()">
+    <input class="narrow" id="maxp" type="number" placeholder="Max $" oninput="dbl()">
     <div class="ml" style="display:flex;align-items:center;gap:8px">
       <span class="rcount" id="rc"></span>
+      <a class="btn-export" href="#" onclick="doExport(event)">⬇ CSV</a>
       <select id="pp" onchange="go(1)">
         <option value="50">50/page</option>
         <option value="100" selected>100/page</option>
@@ -193,6 +240,16 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
     </div>
   </div>
 
+  <!-- PRESET SCREENS -->
+  <div class="presets">
+    <span class="preset-lbl">Quick screens:</span>
+    <button class="preset p70" id="pre70" onclick="applyPreset(70)">🟢 RS 70+</button>
+    <button class="preset p80" id="pre80" onclick="applyPreset(80)">🟡 RS 80+</button>
+    <button class="preset p90" id="pre90" onclick="applyPreset(90)">🔶 RS 90+</button>
+    <button class="preset" id="preAll" onclick="applyPreset(0)" style="margin-left:4px">✕ Show All</button>
+  </div>
+
+  <!-- TABLE -->
   <div class="tbl-wrap">
     <table>
       <thead><tr>
@@ -246,10 +303,10 @@ td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
 <div class="toast" id="toast"></div>
 
 <script>
-let S = {page:1,sort:'rs',dir:'desc',q:'',exch:'all',minRS:'',maxRS:'',minP:'',pp:100};
+let S = {page:1,sort:'rs',dir:'desc',q:'',exch:'all',minRS:'',maxRS:'',minP:'',maxP:'',pp:100};
 let pollId=null, dblId=null;
+let refreshStart=null, lastPct=0;
 
-function col(v){ return v>0?'var(--green)':v<0?'var(--red)':'var(--t2)' }
 function cls(v){ return v===null||v===undefined||isNaN(v)?'neu':v>0?'pos':v<0?'neg':'neu' }
 function fp(v){ if(v===null||v===undefined||isNaN(v))return'—'; return(v>=0?'+':'')+Number(v).toFixed(2)+'%' }
 function rsColor(r){
@@ -263,27 +320,35 @@ function toast(m,d=3000){
   setTimeout(()=>t.classList.remove('on'),d);
 }
 
+function buildParams(extra={}){
+  const pp=parseInt(document.getElementById('pp').value);
+  const p=new URLSearchParams({
+    page:S.page,per_page:pp,sort:S.sort,dir:S.dir,
+    q:document.getElementById('sq').value.trim(),
+    exchange:document.getElementById('se').value
+  });
+  const mn=document.getElementById('mn').value;
+  const mx=document.getElementById('mx').value;
+  const minp=document.getElementById('minp').value;
+  const maxp=document.getElementById('maxp').value;
+  if(mn)  p.set('min_rs',mn);
+  if(mx)  p.set('max_rs',mx);
+  if(minp)p.set('min_price',minp);
+  if(maxp)p.set('max_price',maxp);
+  Object.entries(extra).forEach(([k,v])=>p.set(k,v));
+  return p;
+}
+
 async function go(page=1){
   S.page=page;
-  S.q    =document.getElementById('sq').value.trim();
-  S.exch =document.getElementById('se').value;
-  S.minRS=document.getElementById('mn').value;
-  S.maxRS=document.getElementById('mx').value;
-  S.minP =document.getElementById('mp').value;
-  S.pp   =parseInt(document.getElementById('pp').value);
-
-  const p=new URLSearchParams({page:S.page,per_page:S.pp,sort:S.sort,dir:S.dir,q:S.q,exchange:S.exch});
-  if(S.minRS)p.set('min_rs',S.minRS);
-  if(S.maxRS)p.set('max_rs',S.maxRS);
-  if(S.minP) p.set('min_price',S.minP);
-
   try{
-    const d=await fetch('/api/ratings?'+p).then(r=>r.json());
+    const d=await fetch('/api/ratings?'+buildParams()).then(r=>r.json());
     render(d.rows,d.total);
     renderPg(d.total);
     if(d.meta&&d.meta.updated){
       const dt=new Date(d.meta.updated+'Z');
-      document.getElementById('lastUp').textContent='Updated: '+dt.toLocaleDateString()+' '+dt.toLocaleTimeString();
+      document.getElementById('lastUp').textContent=
+        'Updated: '+dt.toLocaleDateString()+' '+dt.toLocaleTimeString();
     }
   }catch(e){console.error(e)}
 }
@@ -291,7 +356,7 @@ async function go(page=1){
 function dbl(){ clearTimeout(dblId); dblId=setTimeout(()=>go(1),300) }
 
 function srt(c){
-  S.dir = S.sort===c ? (S.dir==='desc'?'asc':'desc') : 'desc';
+  S.dir=S.sort===c?(S.dir==='desc'?'asc':'desc'):'desc';
   S.sort=c;
   document.querySelectorAll('th').forEach(t=>t.classList.remove('act'));
   document.querySelectorAll('[id^="a_"]').forEach(t=>t.textContent='');
@@ -300,21 +365,48 @@ function srt(c){
   go(1);
 }
 
+// ── Presets ───────────────────────────────────────────────────────────────
+function applyPreset(minRS){
+  ['pre70','pre80','pre90','preAll'].forEach(id=>
+    document.getElementById(id).classList.remove('on'));
+  document.getElementById('mn').value = minRS > 0 ? minRS : '';
+  if(minRS===70)      document.getElementById('pre70').classList.add('on');
+  else if(minRS===80) document.getElementById('pre80').classList.add('on');
+  else if(minRS===90) document.getElementById('pre90').classList.add('on');
+  else                document.getElementById('preAll').classList.add('on');
+  go(1);
+}
+
+// ── Export ────────────────────────────────────────────────────────────────
+function doExport(e){
+  e.preventDefault();
+  const p=buildParams({per_page:99999,page:1});
+  const a=document.createElement('a');
+  a.href='/api/export?'+p;
+  a.download='rs_ratings.csv';
+  document.body.appendChild(a);a.click();a.remove();
+  toast('⬇ Downloading CSV…');
+}
+
+// ── Table render ──────────────────────────────────────────────────────────
 function render(rows,total){
+  const pp=parseInt(document.getElementById('pp').value);
   const tb=document.getElementById('tb');
   document.getElementById('rc').textContent=total.toLocaleString()+' results';
   if(!rows||!rows.length){
     tb.innerHTML=`<tr><td colspan="11"><div class="empty">
-      <h3>No results</h3>
-      <p>No data yet — click <strong>▶ Refresh</strong> to fetch all NASDAQ &amp; NYSE stocks.<br>First run takes 20–30 minutes.</p>
-      <button class="btn-big" onclick="doRefresh()">▶ Start Refresh</button>
+      <h3>No data yet</h3>
+      <p>Click <strong>▶ Refresh</strong> to download market data and compute RS ratings.<br><br>
+      <strong>First run:</strong> ~1 hour (Polygon downloads one day at a time on the free tier).<br>
+      <strong>Daily updates:</strong> just a few seconds.</p>
+      <button class="btn-big" onclick="doRefresh()">▶ Start First Refresh</button>
     </div></td></tr>`;
     return;
   }
-  const off=(S.page-1)*S.pp;
+  const off=(S.page-1)*pp;
   tb.innerHTML=rows.map((r,i)=>{
-    const rs=r.rs, c=rsColor(rs);
-    const vm=r.rs_mkt, vms=vm===null?'—':(vm>=0?'+':'')+vm.toFixed(1);
+    const rs=r.rs,c=rsColor(rs);
+    const vm=r.rs_mkt,vms=vm===null?'—':(vm>=0?'+':'')+vm.toFixed(1);
     const vmc=vm>0?'pos':vm<0?'neg':'neu';
     return `<tr onclick="openDetail('${r.symbol}')">
       <td class="rank">${off+i+1}</td>
@@ -337,7 +429,8 @@ function render(rows,total){
 
 function renderPg(total){
   const bar=document.getElementById('pgbar');
-  const tp=Math.ceil(total/S.pp);
+  const pp=parseInt(document.getElementById('pp').value);
+  const tp=Math.ceil(total/pp);
   if(tp<=1){bar.style.display='none';return}
   bar.style.display='flex';
   const cur=S.page;
@@ -372,10 +465,25 @@ async function loadStats(){
   }catch(e){}
 }
 
+// ── ETA calculator ────────────────────────────────────────────────────────
+function calcEta(pct){
+  if(!refreshStart||pct<=0||pct>=100) return '';
+  const elapsed=(Date.now()-refreshStart)/1000;
+  const total=elapsed/(pct/100);
+  const remaining=Math.max(0,total-elapsed);
+  if(remaining<60)  return `~${Math.round(remaining)}s remaining`;
+  if(remaining<3600)return `~${Math.round(remaining/60)}m remaining`;
+  const h=Math.floor(remaining/3600);
+  const m=Math.round((remaining%3600)/60);
+  return `~${h}h ${m}m remaining`;
+}
+
+// ── Refresh ───────────────────────────────────────────────────────────────
 async function doRefresh(){
   const btn=document.getElementById('btnRef');
-  btn.disabled=true; btn.classList.add('loading');
+  btn.disabled=true;btn.classList.add('loading');
   document.getElementById('btnTxt').textContent='Running…';
+  refreshStart=Date.now();
   await fetch('/api/refresh',{method:'POST'});
   poll();
 }
@@ -386,29 +494,43 @@ function poll(){
     try{
       const d=await fetch('/api/progress').then(r=>r.json());
       const on=d.running||d.pct>0;
-      document.getElementById('pw').classList.toggle('on',on);
-      document.getElementById('pm').classList.toggle('on',on);
-      document.getElementById('pb').style.width=d.pct+'%';
-      document.getElementById('pm').textContent=d.msg;
+
+      // Show/hide progress bar
+      document.getElementById('progOuter').classList.toggle('on',on);
+      document.getElementById('progFill').style.width=d.pct+'%';
+      document.getElementById('progMsg').textContent=d.msg||'';
+      document.getElementById('progPct').textContent=Math.round(d.pct)+'%';
+
+      // ETA
+      if(d.running && d.pct>0 && d.pct<100){
+        if(!refreshStart) refreshStart=Date.now();
+        document.getElementById('progEta').textContent=calcEta(d.pct);
+      } else {
+        document.getElementById('progEta').textContent='';
+      }
+
       if(!d.running){
         clearInterval(pollId);
         const btn=document.getElementById('btnRef');
         btn.disabled=false;btn.classList.remove('loading');
         document.getElementById('btnTxt').textContent='▶ Refresh';
-        if(d.error){ toast('⚠ Error: '+d.error,7000) }
-        else if(d.pct>=100){
+        refreshStart=null;
+
+        if(d.error){
+          toast('⚠ Error: '+d.error,7000);
+        } else if(d.pct>=100){
           toast('✓ Ratings updated!');
-          go(1); loadStats();
+          go(1);loadStats();
           setTimeout(()=>{
-            document.getElementById('pw').classList.remove('on');
-            document.getElementById('pm').classList.remove('on');
-          },3000);
+            document.getElementById('progOuter').classList.remove('on');
+          },4000);
         }
       }
     }catch(e){}
   },1500);
 }
 
+// ── Detail panel ──────────────────────────────────────────────────────────
 async function openDetail(sym){
   try{
     const r=await fetch('/api/stock/'+sym).then(x=>x.json());
@@ -429,8 +551,8 @@ async function openDetail(sym){
     const mx=Math.max(1,...perfs.map(p=>Math.abs(p.v||0)));
     document.getElementById('dperf').innerHTML=perfs.map(p=>{
       const bw=Math.abs(p.v||0)/mx*44;
-      const lp=p.v>=0?50:50-bw;
-      const clr=p.v>0?'var(--green)':p.v<0?'var(--red)':'var(--t2)';
+      const lp=(p.v||0)>=0?50:50-bw;
+      const clr=(p.v||0)>0?'var(--green)':(p.v||0)<0?'var(--red)':'var(--t2)';
       return `<div class="prow">
         <span class="pl">${p.l}</span>
         <div class="pbg"><div class="pline"></div>
@@ -447,18 +569,20 @@ function closePanel(){
   document.getElementById('pn').classList.remove('on');
 }
 
-// Init
+// ── Init ──────────────────────────────────────────────────────────────────
 (async()=>{
   try{
     const d=await fetch('/api/progress').then(r=>r.json());
     if(d.running){
+      refreshStart=Date.now();
       const btn=document.getElementById('btnRef');
       btn.disabled=true;btn.classList.add('loading');
       document.getElementById('btnTxt').textContent='Running…';
+      document.getElementById('progOuter').classList.add('on');
       poll();
     }
   }catch(e){}
-  go(1); loadStats();
+  go(1);loadStats();
 })();
 </script>
 </body>
