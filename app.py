@@ -128,7 +128,7 @@ def get_tickers():
 # ── RS calculation (IBD formula) ──────────────────────────────────────────────
 def pct(s, n):
     if len(s) < n + 1: return np.nan
-    return s.iloc[-1] / s.iloc[-n-1]
+    return (s.iloc[-1] / s.iloc[-n-1]) - 1
 
 def composite(s):
     q1 = pct(s, 63)
@@ -167,8 +167,13 @@ def fetch_day_polygon(trading_date):
         if not data.get("results"):
             log.info(f"{ds}: no results (market holiday or future date)")
             return None
-        return {item["T"]: item["c"] for item in data["results"]
-                if "T" in item and "c" in item}
+        # Store both close price and volume for each symbol
+        # Format: {symbol: {"c": close, "v": volume}}
+        return {
+            item["T"]: {"c": item["c"], "v": item.get("v", 0)}
+            for item in data["results"]
+            if "T" in item and "c" in item
+        }
     except Exception as e:
         log.warning(f"Polygon fetch error {ds}: {e}")
         return None
@@ -201,18 +206,44 @@ def prune_old_cache(keep_n_days):
     con.close()
 
 def load_price_matrix(valid_syms):
+    """
+    Returns (price_matrix, volume_matrix) both as DataFrames.
+    index=dates, columns=symbols
+    """
     con = sqlite3.connect(DB)
     rows = con.execute(
         "SELECT trade_date, prices FROM price_cache ORDER BY trade_date").fetchall()
     con.close()
     if not rows:
-        return None
-    frames = {d: json.loads(p) for d, p in rows}
-    matrix = pd.DataFrame(frames).T
-    matrix.index = pd.to_datetime(matrix.index)
-    matrix = matrix.sort_index()
-    keep = [c for c in matrix.columns if c in valid_syms or c == BENCHMARK]
-    return matrix[keep]
+        return None, None
+
+    price_frames  = {}
+    volume_frames = {}
+    for trade_date, prices_json in rows:
+        data = json.loads(prices_json)
+        if data and isinstance(next(iter(data.values()), None), dict):
+            # New format: {sym: {"c": price, "v": volume}}
+            price_frames[trade_date]  = {s: v["c"] for s, v in data.items()}
+            volume_frames[trade_date] = {s: v["v"] for s, v in data.items()}
+        else:
+            # Old format: {sym: price} — volume unknown
+            price_frames[trade_date]  = data
+            volume_frames[trade_date] = {}
+
+    price_matrix = pd.DataFrame(price_frames).T
+    price_matrix.index = pd.to_datetime(price_matrix.index)
+    price_matrix = price_matrix.sort_index()
+
+    vol_matrix = pd.DataFrame(volume_frames).T
+    vol_matrix.index = pd.to_datetime(vol_matrix.index)
+    vol_matrix = vol_matrix.sort_index()
+
+    keep = [c for c in price_matrix.columns if c in valid_syms or c == BENCHMARK]
+    price_matrix = price_matrix[keep]
+    vol_keep = [c for c in keep if c in vol_matrix.columns]
+    vol_matrix = vol_matrix[vol_keep] if vol_keep else pd.DataFrame()
+
+    return price_matrix, vol_matrix
 
 # ── Full refresh ──────────────────────────────────────────────────────────────
 def run_refresh():
@@ -248,7 +279,7 @@ def _do_refresh():
         # Start from enough days back to get TARGET_TRADING_DAYS
         # Since Polygon skips weekends/holidays naturally, we go back
         # ~1.4x target to be safe (365 calendar days ≈ 252 trading days)
-        start_date = today - timedelta(days=252)
+        start_date = today - timedelta(days=370)
         mode = "full"
         log.info(f"First run: downloading from {start_date} to {end_date}")
     else:
@@ -293,14 +324,43 @@ def _do_refresh():
 
     # ── Build matrix and compute ratings ─────────────────────────────────────
     set_prog(80, "Loading price matrix…")
-    matrix = load_price_matrix(valid_syms)
+    matrix, vol_matrix = load_price_matrix(valid_syms)
 
     if matrix is None or matrix.empty:
         set_prog(100, "Error: no price data in cache.")
         return
 
     log.info(f"Matrix: {len(matrix)} trading days x {len(matrix.columns)} symbols")
-    set_prog(84, f"Computing RS ratings for {len(matrix.columns)} symbols…")
+    set_prog(84, f"Applying IBD-style filters (price ≥ $10, avg vol ≥ 100k)…")
+
+    # ── IBD-style universe filters ────────────────────────────────────────
+    MIN_PRICE  = 10.0      # IBD excludes stocks under $10
+    MIN_AVG_VOL = 100_000  # IBD excludes thinly traded stocks
+
+    # Latest closing price filter
+    last_prices = matrix.iloc[-1]  # most recent day
+    price_ok    = set(last_prices[last_prices >= MIN_PRICE].index)
+
+    # Average daily volume filter (last 50 days)
+    vol_ok = set()
+    if not vol_matrix.empty:
+        recent_vol = vol_matrix.tail(50)
+        avg_vol    = recent_vol.mean()
+        vol_ok     = set(avg_vol[avg_vol >= MIN_AVG_VOL].index)
+        # Always keep benchmark regardless
+        vol_ok.add(BENCHMARK)
+    else:
+        # No volume data (old cache) — skip volume filter
+        vol_ok = set(matrix.columns)
+
+    filtered_syms = (price_ok & vol_ok) | {BENCHMARK}
+    filtered_cols = [c for c in matrix.columns if c in filtered_syms]
+    matrix        = matrix[filtered_cols]
+
+    log.info(f"After filters: {len(filtered_cols)} symbols "
+             f"(removed {len(valid_syms) - len(filtered_cols)} below $10 or low volume)")
+
+    set_prog(87, f"Computing RS ratings for {len(filtered_cols)} symbols…")
 
     scores = {}
     for sym in matrix.columns:
