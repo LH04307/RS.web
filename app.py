@@ -99,7 +99,7 @@ def download_batch(syms):
     try:
         raw = yf.download(syms, period=f"{DAYS}d", interval="1d",
                           auto_adjust=True, progress=False,
-                          threads=True, show_errors=False)
+                          threads=True)
         out = {}
         if isinstance(raw.columns, pd.MultiIndex):
             closes = raw["Close"] if "Close" in raw else pd.DataFrame()
