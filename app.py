@@ -128,7 +128,7 @@ def get_tickers():
 # ── RS calculation (IBD formula) ──────────────────────────────────────────────
 def pct(s, n):
     if len(s) < n + 1: return np.nan
-    return (s.iloc[-1] / s.iloc[-n-1]) - 1
+    return s.iloc[-1] / s.iloc[-n-1]
 
 def composite(s):
     q1 = pct(s, 63)
