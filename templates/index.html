@@ -1,188 +1,465 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RS Ratings • Relative Strength</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
-  <style>
-    body { font-family: 'Inter', system-ui, sans-serif; }
-    .tesla-bg { background: linear-gradient(180deg, #0a0a0a, #111111); }
-    .accent-cyan { color: #00f5d4; }
-    table { border-collapse: collapse; }
-    th, td { padding: 12px 16px; }
-    tr:hover { background: #1a1a1a; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RS Rater</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#0b0d12;--bg1:#111520;--bg2:#171c2a;--bg3:#1d2336;
+  --border:#232b3d;--border2:#2c374f;
+  --t0:#e4e9f5;--t1:#8a96b0;--t2:#4a5570;
+  --blue:#3d7fff;--green:#1ecb82;--red:#ff4060;--gold:#f5c020;--orange:#ff6b2b;
+  --mono:'Courier New',monospace;
+}
+html,body{height:100%;background:var(--bg0);color:var(--t0);font-family:Arial,sans-serif;font-size:13px}
+/* HEADER */
+header{height:52px;background:var(--bg1);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 18px;gap:16px}
+.logo{font-family:var(--mono);font-weight:bold;font-size:15px;color:var(--t0);
+  background:var(--blue);padding:4px 10px;border-radius:5px}
+.hstats{display:flex;gap:1px;flex:1;margin-left:12px}
+.hs{background:var(--bg2);padding:3px 14px;display:flex;flex-direction:column;border-right:1px solid var(--border)}
+.hs:first-child{border-radius:4px 0 0 4px}.hs:last-child{border-radius:0 4px 4px 0;border-right:none}
+.hs-l{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2)}
+.hs-v{font-family:var(--mono);font-size:13px;font-weight:bold}
+.green{color:var(--green)}.gold{color:var(--gold)}.red{color:var(--red)}
+#lastUp{font-family:var(--mono);font-size:10px;color:var(--t2);margin-left:auto}
+.btn{background:var(--blue);color:#fff;border:none;border-radius:5px;padding:7px 14px;
+  font-family:var(--mono);font-size:11px;font-weight:bold;cursor:pointer;display:flex;align-items:center;gap:6px}
+.btn:hover{background:#5590ff}.btn:disabled{background:var(--bg3);color:var(--t2);cursor:not-allowed}
+.spin{width:10px;height:10px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;
+  border-radius:50%;display:none;animation:spin .7s linear infinite}
+.btn.loading .spin{display:block}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* PROGRESS */
+.prog-wrap{height:3px;background:var(--bg2);display:none}
+.prog-wrap.on{display:block}
+.prog-bar{height:100%;background:var(--blue);transition:width .4s}
+.prog-msg{padding:4px 18px;font-family:var(--mono);font-size:10px;color:var(--t2);
+  background:var(--bg1);border-bottom:1px solid var(--border);display:none}
+.prog-msg.on{display:block}
+/* CONTROLS */
+.controls{background:var(--bg1);border-bottom:1px solid var(--border);
+  padding:8px 18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lbl{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2)}
+input,select{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;
+  color:var(--t0);font-family:var(--mono);font-size:11px;padding:5px 9px;outline:none}
+input:focus,select:focus{border-color:var(--blue)}
+input::placeholder{color:var(--t2)}
+.search{width:200px}
+.narrow{width:72px}
+.ml{margin-left:auto}
+.rcount{font-family:var(--mono);font-size:11px;color:var(--t2)}
+/* TABLE */
+.tbl-wrap{overflow:auto;flex:1}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+thead{position:sticky;top:0;z-index:4;background:var(--bg2)}
+th{padding:8px 10px;text-align:left;font-family:var(--mono);font-size:10px;font-weight:bold;
+  text-transform:uppercase;letter-spacing:.08em;color:var(--t2);border-bottom:1px solid var(--border);
+  cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--t0)}th.act{color:var(--blue)}
+th:nth-child(1),td:nth-child(1){width:56px}
+th:nth-child(2),td:nth-child(2){width:76px}
+th:nth-child(3),td:nth-child(3){min-width:150px}
+th:nth-child(4),td:nth-child(4){width:90px}
+th:nth-child(5),td:nth-child(5){width:110px}
+th:nth-child(6),td:nth-child(6){width:90px}
+th:nth-child(7),td:nth-child(7){width:80px}
+th:nth-child(8),td:nth-child(8){width:72px}
+th:nth-child(9),td:nth-child(9){width:72px}
+th:nth-child(10),td:nth-child(10){width:72px}
+th:nth-child(11),td:nth-child(11){width:72px}
+tr{border-bottom:1px solid var(--border)}
+tr:hover td{background:var(--bg2);cursor:pointer}
+td{padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--t1);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sym{color:var(--t0);font-weight:bold;font-size:13px}
+.nm{color:var(--t1);font-family:Arial,sans-serif;font-size:11px}
+.rank{color:var(--t2);font-size:11px}
+/* RS cell */
+.rsc{display:flex;align-items:center;gap:7px}
+.rsbar{flex:1;max-width:44px;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden}
+.rsfill{height:100%;border-radius:2px}
+.rsv{font-weight:bold;font-size:13px;min-width:28px;text-align:right}
+/* pct colors */
+.pos{color:var(--green)}.neg{color:var(--red)}.neu{color:var(--t2)}
+/* PAGINATION */
+.pgbar{display:flex;align-items:center;gap:5px;padding:9px 18px;
+  background:var(--bg1);border-top:1px solid var(--border)}
+.pb{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;
+  color:var(--t1);font-family:var(--mono);font-size:11px;padding:3px 9px;cursor:pointer}
+.pb:hover:not(:disabled){border-color:var(--blue);color:var(--t0)}
+.pb.cur{background:var(--blue);border-color:var(--blue);color:#fff}
+.pb:disabled{opacity:.3;cursor:not-allowed}
+.pginfo{font-family:var(--mono);font-size:11px;color:var(--t2);margin-left:auto}
+/* EMPTY */
+.empty{display:flex;flex-direction:column;align-items:center;gap:12px;
+  padding:80px 20px;color:var(--t2);text-align:center}
+.empty h3{font-size:15px;color:var(--t1)}
+.empty p{font-size:12px;max-width:340px;line-height:1.6}
+.btn-big{background:var(--blue);color:#fff;border:none;border-radius:6px;
+  padding:10px 22px;font-family:var(--mono);font-size:12px;font-weight:bold;cursor:pointer;margin-top:6px}
+.btn-big:hover{background:#5590ff}
+/* DETAIL */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:none}
+.overlay.on{display:block}
+.panel{position:fixed;right:0;top:0;bottom:0;width:320px;background:var(--bg1);
+  border-left:1px solid var(--border);z-index:51;
+  transform:translateX(100%);transition:transform .22s ease;display:flex;flex-direction:column}
+.panel.on{transform:translateX(0)}
+.ph{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start}
+.ph-sym{font-family:var(--mono);font-size:20px;font-weight:bold}
+.ph-name{font-size:11px;color:var(--t2);margin-top:3px}
+.ph-exch{font-size:10px;color:var(--blue);font-family:var(--mono);margin-top:3px}
+.close-btn{margin-left:auto;background:none;border:none;color:var(--t2);
+  font-size:18px;cursor:pointer;padding:2px}
+.close-btn:hover{color:var(--t0)}
+.pb-body{padding:16px 18px;display:flex;flex-direction:column;gap:12px;overflow-y:auto}
+.rs-big{background:var(--bg2);border-radius:8px;padding:16px;text-align:center}
+.rs-num{font-family:var(--mono);font-size:48px;font-weight:bold;line-height:1}
+.rs-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--t2);margin-top:4px}
+.rs-bg{height:5px;background:var(--bg3);border-radius:3px;margin-top:10px;overflow:hidden}
+.rs-fill{height:100%;border-radius:3px}
+.dgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dkv{background:var(--bg2);border-radius:6px;padding:9px 12px}
+.dkv-l{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2)}
+.dkv-v{font-family:var(--mono);font-size:15px;font-weight:bold;margin-top:2px}
+.perf-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.1em;color:var(--t2);margin-bottom:6px}
+.prow{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.pl{font-family:var(--mono);font-size:10px;color:var(--t2);width:20px}
+.pbg{flex:1;height:5px;background:var(--bg3);border-radius:3px;position:relative;overflow:visible}
+.pline{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:var(--border2)}
+.pfill{height:100%;border-radius:3px;position:absolute}
+.pv{font-family:var(--mono);font-size:11px;font-weight:bold;min-width:54px;text-align:right}
+/* TOAST */
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(16px);
+  background:var(--bg3);border:1px solid var(--border2);border-radius:7px;
+  padding:9px 18px;font-family:var(--mono);font-size:12px;
+  opacity:0;transition:opacity .2s,transform .2s;z-index:100;pointer-events:none}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+/* scrollbar */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg0)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+/* layout */
+.main{display:flex;flex-direction:column;height:calc(100vh - 52px);overflow:hidden}
+</style>
 </head>
-<body class="tesla-bg text-white min-h-screen">
+<body>
 
-<div class="max-w-7xl mx-auto p-6">
-  <header class="flex justify-between items-center mb-10">
-    <div class="flex items-center gap-3">
-      <i class="fa-solid fa-rocket text-3xl accent-cyan"></i>
-      <h1 class="text-4xl font-bold tracking-tighter">RS RATINGS</h1>
-    </div>
-    <div class="flex items-center gap-4">
-      <button onclick="refreshData()" 
-              class="px-6 py-3 bg-white text-black font-semibold rounded-full hover:bg-gray-200 transition">
-        <i class="fa-solid fa-arrows-rotate"></i> Refresh
-      </button>
-      <button onclick="exportCSV()" 
-              class="px-6 py-3 border border-white/70 font-semibold rounded-full hover:bg-white/10 transition">
-        <i class="fa-solid fa-download"></i> Export CSV
-      </button>
-    </div>
-  </header>
+<header>
+  <div class="logo">RS</div>
+  <span style="font-size:13px;color:var(--t1);font-weight:bold">RS RATER &nbsp;·&nbsp; NASDAQ / NYSE</span>
+  <div class="hstats">
+    <div class="hs"><span class="hs-l">Universe</span><span class="hs-v" id="hTotal">—</span></div>
+    <div class="hs"><span class="hs-l">Avg RS</span><span class="hs-v" id="hAvg">—</span></div>
+    <div class="hs"><span class="hs-l">RS ≥ 90</span><span class="hs-v gold" id="hTop10">—</span></div>
+    <div class="hs"><span class="hs-l">RS ≥ 80</span><span class="hs-v green" id="hTop20">—</span></div>
+    <div class="hs"><span class="hs-l">Beating SPY</span><span class="hs-v green" id="hAbove">—</span></div>
+  </div>
+  <span id="lastUp"></span>
+  <button class="btn" id="btnRef" onclick="doRefresh()">
+    <div class="spin" id="spin"></div><span id="btnTxt">▶ Refresh</span>
+  </button>
+</header>
 
-  <!-- Filters -->
-  <div class="bg-zinc-900 border border-white/10 rounded-3xl p-6 mb-8">
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
-      <div>
-        <label class="block text-xs uppercase tracking-widest mb-1 text-gray-400">Search</label>
-        <input id="search" type="text" placeholder="Symbol or name..." 
-               class="w-full bg-black border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-cyan-400">
-      </div>
-      <div>
-        <label class="block text-xs uppercase tracking-widest mb-1 text-gray-400">Min RS</label>
-        <input id="min_rs" type="number" value="70" 
-               class="w-full bg-black border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-cyan-400">
-      </div>
-      <div>
-        <label class="block text-xs uppercase tracking-widest mb-1 text-gray-400">Min Price</label>
-        <input id="min_price" type="number" placeholder="$5" value="5"
-               class="w-full bg-black border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-cyan-400">
-      </div>
-      <div>
-        <label class="block text-xs uppercase tracking-widest mb-1 text-gray-400">Exchange</label>
-        <select id="exchange" class="w-full bg-black border border-white/20 rounded-xl px-4 py-3">
-          <option value="all">All</option>
-          <option value="NASDAQ">NASDAQ</option>
-          <option value="NYSE">NYSE</option>
-        </select>
-      </div>
-      <div class="flex items-end">
-        <button onclick="loadData()" 
-                class="w-full h-12 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-2xl transition">
-          Apply Filters
-        </button>
-      </div>
+<div class="main">
+  <div class="prog-wrap" id="pw"><div class="prog-bar" id="pb" style="width:0%"></div></div>
+  <div class="prog-msg" id="pm"></div>
+
+  <div class="controls">
+    <input class="search" id="sq" placeholder="Search symbol or name…" oninput="dbl()">
+    <span class="lbl">Exchange</span>
+    <select id="se" onchange="go(1)">
+      <option value="all">All</option>
+      <option value="NASDAQ">NASDAQ</option>
+      <option value="NYSE">NYSE</option>
+      <option value="NYSE MKT">NYSE MKT</option>
+    </select>
+    <span class="lbl">RS</span>
+    <input class="narrow" id="mn" type="number" placeholder="Min" oninput="dbl()">
+    <input class="narrow" id="mx" type="number" placeholder="Max" oninput="dbl()">
+    <span class="lbl">Price ≥</span>
+    <input class="narrow" id="mp" type="number" placeholder="$5" oninput="dbl()">
+    <div class="ml" style="display:flex;align-items:center;gap:8px">
+      <span class="rcount" id="rc"></span>
+      <select id="pp" onchange="go(1)">
+        <option value="50">50/page</option>
+        <option value="100" selected>100/page</option>
+        <option value="250">250/page</option>
+      </select>
     </div>
   </div>
 
-  <!-- Stats -->
-  <div id="stats" class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8"></div>
-
-  <!-- Table -->
-  <div class="bg-zinc-900 border border-white/10 rounded-3xl overflow-hidden">
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-black">
-          <tr>
-            <th class="text-left">Symbol</th>
-            <th class="text-left">Company</th>
-            <th class="text-left">Exchange</th>
-            <th onclick="sortBy('rs')" class="cursor-pointer">RS <i class="fa-solid fa-sort"></i></th>
-            <th onclick="sortBy('rs_mkt')" class="cursor-pointer">vs SPY</th>
-            <th onclick="sortBy('price')" class="cursor-pointer">Price</th>
-            <th onclick="sortBy('d1')" class="cursor-pointer">1D</th>
-            <th onclick="sortBy('m1')" class="cursor-pointer">1M</th>
-            <th onclick="sortBy('m3')" class="cursor-pointer">3M</th>
-            <th onclick="sortBy('y1')" class="cursor-pointer">1Y</th>
-          </tr>
-        </thead>
-        <tbody id="table-body" class="text-gray-300"></tbody>
-      </table>
-    </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th onclick="srt('rs')" class="act"># <span id="a_rs">↓</span></th>
+        <th onclick="srt('symbol')">Symbol <span id="a_symbol"></span></th>
+        <th onclick="srt('name')">Company <span id="a_name"></span></th>
+        <th onclick="srt('exchange')">Exchange <span id="a_exchange"></span></th>
+        <th onclick="srt('rs')" class="act">RS Rating <span id="a_rs2"></span></th>
+        <th onclick="srt('rs_mkt')">vs SPY <span id="a_rs_mkt"></span></th>
+        <th onclick="srt('price')">Price <span id="a_price"></span></th>
+        <th onclick="srt('d1')">1D% <span id="a_d1"></span></th>
+        <th onclick="srt('m1')">1M% <span id="a_m1"></span></th>
+        <th onclick="srt('m3')">3M% <span id="a_m3"></span></th>
+        <th onclick="srt('y1')">1Y% <span id="a_y1"></span></th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
   </div>
 
-  <div class="text-center text-xs text-gray-500 mt-8">
-    Last updated: <span id="last-updated"></span> • Data from Polygon.io • IBD-style Relative Strength
+  <div class="pgbar" id="pgbar" style="display:none"></div>
+</div>
+
+<!-- Detail panel -->
+<div class="overlay" id="ov" onclick="closePanel()"></div>
+<div class="panel" id="pn">
+  <div class="ph">
+    <div>
+      <div class="ph-sym" id="dsym"></div>
+      <div class="ph-name" id="dname"></div>
+      <div class="ph-exch" id="dexch"></div>
+    </div>
+    <button class="close-btn" onclick="closePanel()">✕</button>
+  </div>
+  <div class="pb-body">
+    <div class="rs-big">
+      <div class="rs-num" id="drs"></div>
+      <div class="rs-lbl">RS Rating (1–99)</div>
+      <div class="rs-bg"><div class="rs-fill" id="drsfill"></div></div>
+    </div>
+    <div class="dgrid">
+      <div class="dkv"><div class="dkv-l">vs SPY</div><div class="dkv-v" id="dvs"></div></div>
+      <div class="dkv"><div class="dkv-l">Price</div><div class="dkv-v" id="dpr"></div></div>
+    </div>
+    <div>
+      <div class="perf-lbl">Performance</div>
+      <div id="dperf"></div>
+    </div>
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
-let currentSort = "rs";
-let currentDir = "desc";
+let S = {page:1,sort:'rs',dir:'desc',q:'',exch:'all',minRS:'',maxRS:'',minP:'',pp:100};
+let pollId=null, dblId=null;
 
-async function loadData() {
-  const q = document.getElementById('search').value;
-  const min_rs = document.getElementById('min_rs').value || 70;
-  const min_price = document.getElementById('min_price').value;
-  const exchange = document.getElementById('exchange').value;
-
-  let url = `/api/ratings?page=1&per_page=200&sort=${currentSort}&dir=${currentDir}&min_rs=${min_rs}`;
-  if (q) url += `&q=${encodeURIComponent(q)}`;
-  if (min_price) url += `&min_price=${min_price}`;
-  if (exchange !== 'all') url += `&exchange=${exchange}`;
-
-  const res = await fetch(url);
-  const data = await res.json();
-
-  renderTable(data.rows);
-  renderStats(data.meta);
-  document.getElementById('last-updated').textContent = new Date().toLocaleString();
+function col(v){ return v>0?'var(--green)':v<0?'var(--red)':'var(--t2)' }
+function cls(v){ return v===null||v===undefined||isNaN(v)?'neu':v>0?'pos':v<0?'neg':'neu' }
+function fp(v){ if(v===null||v===undefined||isNaN(v))return'—'; return(v>=0?'+':'')+Number(v).toFixed(2)+'%' }
+function rsColor(r){
+  if(r>=90)return'var(--orange)';if(r>=80)return'var(--gold)';
+  if(r>=70)return'var(--green)'; if(r>=50)return'#5dd9a0';
+  if(r>=30)return'var(--t1)';    return'var(--red)';
+}
+function toast(m,d=3000){
+  const t=document.getElementById('toast');
+  t.textContent=m;t.classList.add('on');
+  setTimeout(()=>t.classList.remove('on'),d);
 }
 
-function renderTable(rows) {
-  const tbody = document.getElementById('table-body');
-  tbody.innerHTML = '';
+async function go(page=1){
+  S.page=page;
+  S.q    =document.getElementById('sq').value.trim();
+  S.exch =document.getElementById('se').value;
+  S.minRS=document.getElementById('mn').value;
+  S.maxRS=document.getElementById('mx').value;
+  S.minP =document.getElementById('mp').value;
+  S.pp   =parseInt(document.getElementById('pp').value);
 
-  rows.forEach(r => {
-    const row = `
-      <tr class="border-t border-white/10 hover:bg-zinc-800/70">
-        <td class="font-mono font-bold">${r.symbol}</td>
-        <td class="max-w-xs truncate">${r.name}</td>
-        <td>${r.exchange}</td>
-        <td class="font-bold ${r.rs >= 90 ? 'text-emerald-400' : r.rs >= 80 ? 'text-cyan-400' : 'text-white'}">${r.rs}</td>
-        <td>${r.rs_mkt > 0 ? '+' : ''}${r.rs_mkt}</td>
-        <td>$${r.price}</td>
-        <td class="${r.d1 >= 0 ? 'text-emerald-400' : 'text-red-400'}">${r.d1}%</td>
-        <td class="${r.m1 >= 0 ? 'text-emerald-400' : 'text-red-400'}">${r.m1}%</td>
-        <td class="${r.m3 >= 0 ? 'text-emerald-400' : 'text-red-400'}">${r.m3}%</td>
-        <td class="${r.y1 >= 0 ? 'text-emerald-400' : 'text-red-400'}">${r.y1}%</td>
-      </tr>`;
-    tbody.innerHTML += row;
-  });
+  const p=new URLSearchParams({page:S.page,per_page:S.pp,sort:S.sort,dir:S.dir,q:S.q,exchange:S.exch});
+  if(S.minRS)p.set('min_rs',S.minRS);
+  if(S.maxRS)p.set('max_rs',S.maxRS);
+  if(S.minP) p.set('min_price',S.minP);
+
+  try{
+    const d=await fetch('/api/ratings?'+p).then(r=>r.json());
+    render(d.rows,d.total);
+    renderPg(d.total);
+    if(d.meta&&d.meta.updated){
+      const dt=new Date(d.meta.updated+'Z');
+      document.getElementById('lastUp').textContent='Updated: '+dt.toLocaleDateString()+' '+dt.toLocaleTimeString();
+    }
+  }catch(e){console.error(e)}
 }
 
-async function renderStats(meta) {
-  const statsDiv = document.getElementById('stats');
-  // You can expand this with real stats from /api/stats if you want
-  statsDiv.innerHTML = `
-    <div class="bg-zinc-900 border border-white/10 rounded-2xl p-5">
-      <div class="text-cyan-400 text-sm">TOTAL RATED</div>
-      <div class="text-4xl font-bold">${meta.total || 0}</div>
-    </div>
-  `;
+function dbl(){ clearTimeout(dblId); dblId=setTimeout(()=>go(1),300) }
+
+function srt(c){
+  S.dir = S.sort===c ? (S.dir==='desc'?'asc':'desc') : 'desc';
+  S.sort=c;
+  document.querySelectorAll('th').forEach(t=>t.classList.remove('act'));
+  document.querySelectorAll('[id^="a_"]').forEach(t=>t.textContent='');
+  const arr=S.dir==='desc'?'↓':'↑';
+  ['a_'+c,'a_'+c+'2'].forEach(id=>{const e=document.getElementById(id);if(e)e.textContent=arr});
+  go(1);
 }
 
-function sortBy(col) {
-  if (currentSort === col) {
-    currentDir = currentDir === "desc" ? "asc" : "desc";
-  } else {
-    currentSort = col;
-    currentDir = "desc";
+function render(rows,total){
+  const tb=document.getElementById('tb');
+  document.getElementById('rc').textContent=total.toLocaleString()+' results';
+  if(!rows||!rows.length){
+    tb.innerHTML=`<tr><td colspan="11"><div class="empty">
+      <h3>No results</h3>
+      <p>No data yet — click <strong>▶ Refresh</strong> to fetch all NASDAQ &amp; NYSE stocks.<br>First run takes 20–30 minutes.</p>
+      <button class="btn-big" onclick="doRefresh()">▶ Start Refresh</button>
+    </div></td></tr>`;
+    return;
   }
-  loadData();
+  const off=(S.page-1)*S.pp;
+  tb.innerHTML=rows.map((r,i)=>{
+    const rs=r.rs, c=rsColor(rs);
+    const vm=r.rs_mkt, vms=vm===null?'—':(vm>=0?'+':'')+vm.toFixed(1);
+    const vmc=vm>0?'pos':vm<0?'neg':'neu';
+    return `<tr onclick="openDetail('${r.symbol}')">
+      <td class="rank">${off+i+1}</td>
+      <td class="sym">${r.symbol}</td>
+      <td class="nm">${r.name||'—'}</td>
+      <td style="color:var(--t2);font-size:10px">${r.exchange||'—'}</td>
+      <td><div class="rsc">
+        <div class="rsbar"><div class="rsfill" style="width:${rs}%;background:${c}"></div></div>
+        <span class="rsv" style="color:${c}">${rs||'—'}</span>
+      </div></td>
+      <td class="${vmc}">${vms}</td>
+      <td>${r.price!==null?'$'+Number(r.price).toFixed(2):'—'}</td>
+      <td class="${cls(r.d1)}">${fp(r.d1)}</td>
+      <td class="${cls(r.m1)}">${fp(r.m1)}</td>
+      <td class="${cls(r.m3)}">${fp(r.m3)}</td>
+      <td class="${cls(r.y1)}">${fp(r.y1)}</td>
+    </tr>`;
+  }).join('');
 }
 
-async function refreshData() {
-  await fetch('/api/refresh', {method: 'POST'});
-  alert("Refresh started in background. Check progress in logs.");
-  setTimeout(loadData, 2000);
+function renderPg(total){
+  const bar=document.getElementById('pgbar');
+  const tp=Math.ceil(total/S.pp);
+  if(tp<=1){bar.style.display='none';return}
+  bar.style.display='flex';
+  const cur=S.page;
+  let h=`<button class="pb" ${cur===1?'disabled':''} onclick="go(${cur-1})">‹</button>`;
+  let pages=[];
+  if(tp<=7){for(let p=1;p<=tp;p++)pages.push(p)}
+  else{
+    pages.push(1);
+    if(cur>3)pages.push('…');
+    for(let p=Math.max(2,cur-1);p<=Math.min(tp-1,cur+1);p++)pages.push(p);
+    if(cur<tp-2)pages.push('…');
+    pages.push(tp);
+  }
+  pages.forEach(p=>{
+    if(p==='…')h+=`<span style="color:var(--t2);font-size:11px;padding:0 3px">…</span>`;
+    else h+=`<button class="pb ${p===cur?'cur':''}" onclick="go(${p})">${p}</button>`;
+  });
+  h+=`<button class="pb" ${cur===tp?'disabled':''} onclick="go(${cur+1})">›</button>`;
+  h+=`<span class="pginfo">Page ${cur}/${tp} · ${total.toLocaleString()} stocks</span>`;
+  bar.innerHTML=h;
 }
 
-async function exportCSV() {
-  const q = document.getElementById('search').value;
-  const min_rs = document.getElementById('min_rs').value || 70;
-  let url = `/api/export?min_rs=${min_rs}&sort=${currentSort}&dir=${currentDir}`;
-  if (q) url += `&q=${encodeURIComponent(q)}`;
-  window.location.href = url;
+async function loadStats(){
+  try{
+    const d=await fetch('/api/stats').then(r=>r.json());
+    if(!d.total)return;
+    document.getElementById('hTotal').textContent=(d.total||0).toLocaleString();
+    document.getElementById('hAvg').textContent=d.avg_rs||'—';
+    document.getElementById('hTop10').textContent=(d.top10||0).toLocaleString();
+    document.getElementById('hTop20').textContent=(d.top20||0).toLocaleString();
+    document.getElementById('hAbove').textContent=(d.above_mkt||0).toLocaleString();
+  }catch(e){}
 }
 
-// Initial load
-window.onload = loadData;
+async function doRefresh(){
+  const btn=document.getElementById('btnRef');
+  btn.disabled=true; btn.classList.add('loading');
+  document.getElementById('btnTxt').textContent='Running…';
+  await fetch('/api/refresh',{method:'POST'});
+  poll();
+}
+
+function poll(){
+  if(pollId)clearInterval(pollId);
+  pollId=setInterval(async()=>{
+    try{
+      const d=await fetch('/api/progress').then(r=>r.json());
+      const on=d.running||d.pct>0;
+      document.getElementById('pw').classList.toggle('on',on);
+      document.getElementById('pm').classList.toggle('on',on);
+      document.getElementById('pb').style.width=d.pct+'%';
+      document.getElementById('pm').textContent=d.msg;
+      if(!d.running){
+        clearInterval(pollId);
+        const btn=document.getElementById('btnRef');
+        btn.disabled=false;btn.classList.remove('loading');
+        document.getElementById('btnTxt').textContent='▶ Refresh';
+        if(d.error){ toast('⚠ Error: '+d.error,7000) }
+        else if(d.pct>=100){
+          toast('✓ Ratings updated!');
+          go(1); loadStats();
+          setTimeout(()=>{
+            document.getElementById('pw').classList.remove('on');
+            document.getElementById('pm').classList.remove('on');
+          },3000);
+        }
+      }
+    }catch(e){}
+  },1500);
+}
+
+async function openDetail(sym){
+  try{
+    const r=await fetch('/api/stock/'+sym).then(x=>x.json());
+    if(r.error)return;
+    document.getElementById('dsym').textContent=r.symbol;
+    document.getElementById('dname').textContent=r.name||'—';
+    document.getElementById('dexch').textContent=r.exchange||'—';
+    const c=rsColor(r.rs);
+    document.getElementById('drs').textContent=r.rs||'—';
+    document.getElementById('drs').style.color=c;
+    document.getElementById('drsfill').style.width=r.rs+'%';
+    document.getElementById('drsfill').style.background=c;
+    const vm=document.getElementById('dvs');
+    vm.textContent=r.rs_mkt!==null?(r.rs_mkt>=0?'+':'')+r.rs_mkt.toFixed(1):'—';
+    vm.className='dkv-v '+(r.rs_mkt>0?'pos':r.rs_mkt<0?'neg':'neu');
+    document.getElementById('dpr').textContent=r.price!==null?'$'+Number(r.price).toFixed(2):'—';
+    const perfs=[{l:'1D',v:r.d1},{l:'1M',v:r.m1},{l:'3M',v:r.m3},{l:'1Y',v:r.y1}];
+    const mx=Math.max(1,...perfs.map(p=>Math.abs(p.v||0)));
+    document.getElementById('dperf').innerHTML=perfs.map(p=>{
+      const bw=Math.abs(p.v||0)/mx*44;
+      const lp=p.v>=0?50:50-bw;
+      const clr=p.v>0?'var(--green)':p.v<0?'var(--red)':'var(--t2)';
+      return `<div class="prow">
+        <span class="pl">${p.l}</span>
+        <div class="pbg"><div class="pline"></div>
+          <div class="pfill" style="left:${lp}%;width:${bw}%;background:${clr}"></div></div>
+        <span class="pv" style="color:${clr}">${fp(p.v)}</span>
+      </div>`;
+    }).join('');
+    document.getElementById('ov').classList.add('on');
+    document.getElementById('pn').classList.add('on');
+  }catch(e){console.error(e)}
+}
+function closePanel(){
+  document.getElementById('ov').classList.remove('on');
+  document.getElementById('pn').classList.remove('on');
+}
+
+// Init
+(async()=>{
+  try{
+    const d=await fetch('/api/progress').then(r=>r.json());
+    if(d.running){
+      const btn=document.getElementById('btnRef');
+      btn.disabled=true;btn.classList.add('loading');
+      document.getElementById('btnTxt').textContent='Running…';
+      poll();
+    }
+  }catch(e){}
+  go(1); loadStats();
+})();
 </script>
 </body>
 </html>
