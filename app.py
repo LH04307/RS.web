@@ -26,7 +26,7 @@ DB  = Path("/tmp/rs.db")
 NASDAQ_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
 NYSE_URL   = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
 BENCHMARK  = "SPY"
-BATCH      = 150
+BATCH      = 50
 DAYS       = 280
 
 # ── Progress ─────────────────────────────────────────────────────────────────
@@ -85,10 +85,12 @@ def pct(s, n):
     return (s.iloc[-1] / s.iloc[-n-1]) - 1
 
 def composite(s):
+    # IBD-accurate: cumulative ROC from today back N days
+    # Raw RS = 0.4*ROC(63) + 0.2*ROC(126) + 0.2*ROC(189) + 0.2*ROC(252)
     q1 = pct(s, 63)
-    q2 = pct(s.iloc[:-63],  63) if len(s) > 126 else np.nan
-    q3 = pct(s.iloc[:-126], 63) if len(s) > 189 else np.nan
-    q4 = pct(s.iloc[:-189], 63) if len(s) > 252 else np.nan
+    q2 = pct(s, 126) if len(s) > 126 else np.nan
+    q3 = pct(s, 189) if len(s) > 189 else np.nan
+    q4 = pct(s, 252) if len(s) > 252 else np.nan
     vals = [(q1,0.4),(q2,0.2),(q3,0.2),(q4,0.2)]
     good = [(v,w) for v,w in vals if not np.isnan(v)]
     if not good: return np.nan
@@ -99,7 +101,7 @@ def download_batch(syms):
     try:
         raw = yf.download(syms, period=f"{DAYS}d", interval="1d",
                           auto_adjust=True, progress=False,
-                          threads=True)
+                          threads=False)
         out = {}
         if isinstance(raw.columns, pd.MultiIndex):
             closes = raw["Close"] if "Close" in raw else pd.DataFrame()
@@ -154,7 +156,7 @@ def _do_refresh():
                 "m3":  round(pct(c,63)*100,  2),
                 "y1":  round(pct(c,252)*100, 2),
             }
-        time.sleep(0.25)
+        time.sleep(2)
 
     set_prog(90, "Ranking…")
     series = pd.Series(scores).dropna()
