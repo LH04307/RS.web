@@ -248,7 +248,7 @@ def _do_refresh():
         # Start from enough days back to get TARGET_TRADING_DAYS
         # Since Polygon skips weekends/holidays naturally, we go back
         # ~1.4x target to be safe (365 calendar days ≈ 252 trading days)
-        start_date = today - timedelta(days=370)
+        start_date = today - timedelta(days=252)
         mode = "full"
         log.info(f"First run: downloading from {start_date} to {end_date}")
     else:
