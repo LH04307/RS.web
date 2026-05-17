@@ -4,7 +4,8 @@ import threading
 import logging
 import time
 import io
-from datetime import datetime, timedelta
+import gzip
+from datetime import datetime, timedelta, date
 from pathlib import Path
 
 import requests
@@ -20,12 +21,11 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 DB  = Path("/tmp/rs.db")
 
-NASDAQ_URL   = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
-NYSE_URL     = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
-BENCHMARK    = "SPY"
-TIINGO_TOKEN = os.environ.get("TIINGO_TOKEN", "")
-TIINGO_BASE  = "https://api.tiingo.com/tiingo/daily"
-BATCH        = 50   # tickers per Tiingo bulk request
+NASDAQ_URL     = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+NYSE_URL       = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+BENCHMARK      = "SPY"
+POLYGON_TOKEN  = os.environ.get("POLYGON_TOKEN", "")
+POLYGON_BASE   = "https://api.polygon.io"
 
 _prog = {"pct": 0, "msg": "Idle", "running": False, "error": None}
 _lock = threading.Lock()
@@ -93,57 +93,86 @@ def composite(s):
     tw = sum(w for _,w in good)
     return sum(v*(w/tw) for v,w in good)
 
-# ── Tiingo data fetching ──────────────────────────────────────────────────────
-def tiingo_headers():
-    return {
-        "Authorization": f"Token {TIINGO_TOKEN}",
-        "Content-Type": "application/json",
-    }
+# ── Polygon bulk flat-file download ──────────────────────────────────────────
+def get_trading_dates(n_days=380):
+    """Get list of recent trading dates to fetch."""
+    dates = []
+    d = datetime.utcnow().date() - timedelta(days=1)
+    while len(dates) < n_days:
+        # Skip weekends
+        if d.weekday() < 5:
+            dates.append(d)
+        d -= timedelta(days=1)
+    return sorted(dates)
 
-def fetch_tiingo_batch(symbols):
+def fetch_day(trading_date):
     """
-    Fetch end-of-day prices for a list of symbols from Tiingo.
-    Returns dict: {symbol: pd.Series of adjClose prices}
+    Fetch all US stock prices for a single trading date using
+    Polygon's grouped daily endpoint — one call, entire market.
+    Returns DataFrame with columns: symbol, close (adjusted)
     """
-    end_date   = datetime.utcnow().strftime("%Y-%m-%d")
-    start_date = (datetime.utcnow() - timedelta(days=380)).strftime("%Y-%m-%d")
-    result = {}
+    ds = trading_date.strftime("%Y-%m-%d")
+    url = (f"{POLYGON_BASE}/v2/aggs/grouped/locale/us/market/stocks/{ds}"
+           f"?adjusted=true&apiKey={POLYGON_TOKEN}")
+    try:
+        r = requests.get(url, timeout=30)
+        if r.status_code == 403:
+            log.error("Polygon API key invalid or unauthorized")
+            return None
+        if r.status_code == 429:
+            log.warning("Polygon rate limit — sleeping 60s")
+            time.sleep(60)
+            r = requests.get(url, timeout=30)
+        if r.status_code != 200:
+            log.warning(f"Polygon {ds}: HTTP {r.status_code}")
+            return None
 
-    for sym in symbols:
-        try:
-            url = (f"{TIINGO_BASE}/{sym}/prices"
-                   f"?startDate={start_date}&endDate={end_date}"
-                   f"&resampleFreq=daily&token={TIINGO_TOKEN}")
-            r = requests.get(url, headers=tiingo_headers(), timeout=15)
+        data = r.json()
+        if data.get("resultsCount", 0) == 0 or not data.get("results"):
+            log.info(f"No results for {ds} (likely market holiday)")
+            return None
 
-            if r.status_code == 404:
-                continue  # ticker not found on Tiingo
-            if r.status_code == 429:
-                log.warning("Tiingo rate limit hit — sleeping 60s")
-                time.sleep(60)
-                r = requests.get(url, headers=tiingo_headers(), timeout=15)
-            if r.status_code != 200:
-                log.debug(f"{sym}: HTTP {r.status_code}")
-                continue
+        df = pd.DataFrame(data["results"])
+        # 'T' = ticker, 'c' = close price
+        df = df[["T", "c"]].rename(columns={"T": "symbol", "c": "close"})
+        df = df.dropna()
+        return df
 
-            data = r.json()
-            if not data:
-                continue
+    except Exception as e:
+        log.warning(f"Polygon fetch error for {ds}: {e}")
+        return None
 
-            closes = pd.Series(
-                [d.get("adjClose") or d.get("close") for d in data],
-                index=pd.to_datetime([d["date"] for d in data])
-            ).dropna().sort_index()
+def build_price_matrix():
+    """
+    Download ~252 trading days of data using Polygon grouped daily endpoint.
+    Returns a DataFrame: rows=dates, columns=symbols, values=adjusted close.
+    Each date = 1 API call. Total: ~252 calls for a full year.
+    """
+    dates = get_trading_dates(380)  # get extra to ensure 252 trading days
+    frames = {}
+    total = len(dates)
 
-            if len(closes) >= 63:
-                result[sym] = closes
+    for i, d in enumerate(dates):
+        pct_done = 10 + (i / total) * 70
+        if i % 10 == 0:
+            set_prog(pct_done, f"Downloading market data: {d}  ({i+1}/{total} days)…")
 
-        except Exception as e:
-            log.debug(f"{sym} error: {e}")
+        df = fetch_day(d)
+        if df is not None:
+            frames[d] = df.set_index("symbol")["close"]
 
-        time.sleep(0.05)  # polite delay — Tiingo allows ~50 req/hr on free tier
+        # Polygon free tier: 5 calls/minute — stay safe at 4/min
+        time.sleep(15)
 
-    return result
+    if not frames:
+        return None
+
+    # Build matrix: index=date, columns=symbol
+    matrix = pd.DataFrame(frames).T
+    matrix.index = pd.to_datetime(matrix.index)
+    matrix = matrix.sort_index()
+    log.info(f"Price matrix: {len(matrix)} days x {len(matrix.columns)} symbols")
+    return matrix
 
 # ── Full refresh ──────────────────────────────────────────────────────────────
 def run_refresh():
@@ -159,67 +188,83 @@ def run_refresh():
         with _lock: _prog["running"] = False
 
 def _do_refresh():
-    if not TIINGO_TOKEN:
-        set_prog(100, "Error: TIINGO_TOKEN environment variable not set.")
+    if not POLYGON_TOKEN:
+        set_prog(100, "Error: POLYGON_TOKEN environment variable not set.")
         return
 
-    set_prog(0, "Fetching ticker list…")
-    df   = get_tickers()
-    syms = df["sym"].tolist()
-    set_prog(3, f"Got {len(syms)} tickers. Fetching benchmark (SPY)…")
+    set_prog(0, "Fetching ticker universe…")
+    universe = get_tickers()
+    valid_syms = set(universe["sym"].tolist())
+    log.info(f"Universe: {len(valid_syms)} tickers")
 
-    bench_data  = fetch_tiingo_batch([BENCHMARK])
-    bench_score = composite(bench_data[BENCHMARK]) if BENCHMARK in bench_data else 0.0
-    log.info(f"SPY benchmark score: {bench_score:.4f}")
+    set_prog(10, "Downloading market data from Polygon (this takes ~1 hour on free tier)…")
+    matrix = build_price_matrix()
 
-    scores, prices = {}, {}
-    total    = len(syms)
-    ok_count = 0
-
-    batches = [syms[i:i+BATCH] for i in range(0, total, BATCH)]
-    n = len(batches)
-
-    for i, batch in enumerate(batches):
-        pct_done = 3 + (i / n) * 86
-        set_prog(pct_done, f"Batch {i+1}/{n}  (✓{ok_count} rated so far)…")
-
-        data = fetch_tiingo_batch(batch)
-
-        for sym, closes in data.items():
-            scores[sym] = composite(closes)
-            prices[sym] = {
-                "price": round(float(closes.iloc[-1]), 2),
-                "d1":  round(pct(closes, 1)   * 100, 2),
-                "m1":  round(pct(closes, 21)  * 100, 2),
-                "m3":  round(pct(closes, 63)  * 100, 2),
-                "y1":  round(pct(closes, 252) * 100, 2),
-            }
-            ok_count += 1
-
-        # Tiingo free tier: ~50 requests/hour per token
-        # Each batch of 50 = 50 requests, so pause between batches
-        time.sleep(2)
-
-    set_prog(90, f"Ranking {ok_count} stocks…")
-    if ok_count == 0:
-        set_prog(100, "Error: no data returned from Tiingo. Check your API token.")
+    if matrix is None or matrix.empty:
+        set_prog(100, "Error: could not download market data from Polygon.")
         return
 
-    series = pd.Series(scores).dropna()
+    set_prog(82, f"Computing RS ratings for {len(matrix.columns)} symbols…")
+
+    # Filter to only NASDAQ/NYSE stocks we care about
+    # (Polygon returns all US stocks including OTC etc)
+    valid_cols = [c for c in matrix.columns if c in valid_syms]
+    matrix = matrix[valid_cols + ([BENCHMARK] if BENCHMARK in matrix.columns else [])]
+    log.info(f"Filtered matrix: {len(matrix.columns)} symbols")
+
+    # Compute composite scores
+    scores = {}
+    for sym in matrix.columns:
+        s = matrix[sym].dropna()
+        score = composite(s)
+        if not np.isnan(score):
+            scores[sym] = score
+
+    if not scores:
+        set_prog(100, "Error: could not compute any RS scores.")
+        return
+
+    # Benchmark
+    bench_score = scores.get(BENCHMARK, 0.0)
+
+    # Rank 1-99
+    series = pd.Series(scores)
     ranked = (series.rank(pct=True)*98+1).clip(1,99).round(0).astype(int)
     spy_pct = float((series < bench_score).mean()*98+1)
 
+    set_prog(90, "Calculating performance metrics…")
+
+    # Price and performance metrics
+    def safe_pct(sym, n):
+        s = matrix[sym].dropna()
+        v = pct(s, n)
+        return round(v*100, 2) if not np.isnan(v) else None
+
     set_prog(94, "Saving to database…")
-    info = df.set_index("sym")
+    info = universe.set_index("sym")
     now  = datetime.utcnow().isoformat()
     rows = []
+
     for sym, rs in ranked.items():
+        if sym == BENCHMARK:
+            continue
+        if sym not in valid_syms:
+            continue
         r = info.loc[sym] if sym in info.index else pd.Series({"name":"","exch":""})
-        p = prices.get(sym, {})
-        rows.append((sym, r.get("name",""), r.get("exch",""),
-                     int(rs), round(float(rs)-spy_pct, 1),
-                     p.get("price"), p.get("d1"), p.get("m1"),
-                     p.get("m3"),    p.get("y1"),  now))
+        last_price = matrix[sym].dropna().iloc[-1] if sym in matrix.columns else None
+        rows.append((
+            sym,
+            r.get("name", ""),
+            r.get("exch", ""),
+            int(rs),
+            round(float(rs) - spy_pct, 1),
+            round(float(last_price), 2) if last_price else None,
+            safe_pct(sym, 1),
+            safe_pct(sym, 21),
+            safe_pct(sym, 63),
+            safe_pct(sym, 252),
+            now
+        ))
 
     con = sqlite3.connect(DB)
     con.execute("DELETE FROM stocks")
@@ -319,8 +364,7 @@ con = sqlite3.connect(DB)
 has_data = con.execute("SELECT COUNT(*) FROM stocks").fetchone()[0]
 con.close()
 if not has_data:
-    log.info("No data — starting first refresh…")
-    threading.Thread(target=run_refresh, daemon=True).start()
+    log.info("No data — will wait for manual refresh trigger.")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
