@@ -4,32 +4,29 @@ import threading
 import logging
 import time
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
 import numpy as np
 import pandas as pd
-import yfinance as yf
 from flask import Flask, jsonify, render_template, request
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-# ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Config ───────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 DB  = Path("/tmp/rs.db")
 
-NASDAQ_URL = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
-NYSE_URL   = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
-BENCHMARK  = "SPY"
-BATCH      = 50
-DAYS       = 280
+NASDAQ_URL   = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+NYSE_URL     = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+BENCHMARK    = "SPY"
+TIINGO_TOKEN = os.environ.get("TIINGO_TOKEN", "")
+TIINGO_BASE  = "https://api.tiingo.com/tiingo/daily"
+BATCH        = 50   # tickers per Tiingo bulk request
 
-# ── Progress ─────────────────────────────────────────────────────────────────
 _prog = {"pct": 0, "msg": "Idle", "running": False, "error": None}
 _lock = threading.Lock()
 
@@ -39,7 +36,7 @@ def set_prog(pct, msg):
         _prog["msg"] = msg
     log.info(f"[{pct:.0f}%] {msg}")
 
-# ── Database ─────────────────────────────────────────────────────────────────
+# ── Database ──────────────────────────────────────────────────────────────────
 def init_db():
     con = sqlite3.connect(DB)
     con.execute("""CREATE TABLE IF NOT EXISTS stocks (
@@ -85,8 +82,7 @@ def pct(s, n):
     return (s.iloc[-1] / s.iloc[-n-1]) - 1
 
 def composite(s):
-    # IBD-accurate: cumulative ROC from today back N days
-    # Raw RS = 0.4*ROC(63) + 0.2*ROC(126) + 0.2*ROC(189) + 0.2*ROC(252)
+    # IBD formula: 0.4*ROC(63) + 0.2*ROC(126) + 0.2*ROC(189) + 0.2*ROC(252)
     q1 = pct(s, 63)
     q2 = pct(s, 126) if len(s) > 126 else np.nan
     q3 = pct(s, 189) if len(s) > 189 else np.nan
@@ -97,25 +93,57 @@ def composite(s):
     tw = sum(w for _,w in good)
     return sum(v*(w/tw) for v,w in good)
 
-def download_batch(syms):
-    try:
-        raw = yf.download(syms, period=f"{DAYS}d", interval="1d",
-                          auto_adjust=True, progress=False,
-                          threads=False)
-        out = {}
-        if isinstance(raw.columns, pd.MultiIndex):
-            closes = raw["Close"] if "Close" in raw else pd.DataFrame()
-            for s in syms:
-                if s in closes.columns:
-                    c = closes[s].dropna()
-                    if len(c) >= 63: out[s] = c
-        elif "Close" in raw.columns and len(syms) == 1:
-            c = raw["Close"].dropna()
-            if len(c) >= 63: out[syms[0]] = c
-        return out
-    except Exception as e:
-        log.warning(f"Download error: {e}")
-        return {}
+# ── Tiingo data fetching ──────────────────────────────────────────────────────
+def tiingo_headers():
+    return {
+        "Authorization": f"Token {TIINGO_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+def fetch_tiingo_batch(symbols):
+    """
+    Fetch end-of-day prices for a list of symbols from Tiingo.
+    Returns dict: {symbol: pd.Series of adjClose prices}
+    """
+    end_date   = datetime.utcnow().strftime("%Y-%m-%d")
+    start_date = (datetime.utcnow() - timedelta(days=380)).strftime("%Y-%m-%d")
+    result = {}
+
+    for sym in symbols:
+        try:
+            url = (f"{TIINGO_BASE}/{sym}/prices"
+                   f"?startDate={start_date}&endDate={end_date}"
+                   f"&resampleFreq=daily&token={TIINGO_TOKEN}")
+            r = requests.get(url, headers=tiingo_headers(), timeout=15)
+
+            if r.status_code == 404:
+                continue  # ticker not found on Tiingo
+            if r.status_code == 429:
+                log.warning("Tiingo rate limit hit — sleeping 60s")
+                time.sleep(60)
+                r = requests.get(url, headers=tiingo_headers(), timeout=15)
+            if r.status_code != 200:
+                log.debug(f"{sym}: HTTP {r.status_code}")
+                continue
+
+            data = r.json()
+            if not data:
+                continue
+
+            closes = pd.Series(
+                [d.get("adjClose") or d.get("close") for d in data],
+                index=pd.to_datetime([d["date"] for d in data])
+            ).dropna().sort_index()
+
+            if len(closes) >= 63:
+                result[sym] = closes
+
+        except Exception as e:
+            log.debug(f"{sym} error: {e}")
+
+        time.sleep(0.05)  # polite delay — Tiingo allows ~50 req/hr on free tier
+
+    return result
 
 # ── Full refresh ──────────────────────────────────────────────────────────────
 def run_refresh():
@@ -131,34 +159,52 @@ def run_refresh():
         with _lock: _prog["running"] = False
 
 def _do_refresh():
-    set_prog(0,  "Fetching ticker list…")
-    df = get_tickers()
-    syms = df["sym"].tolist()
-    set_prog(3, f"Got {len(syms)} tickers. Fetching benchmark…")
+    if not TIINGO_TOKEN:
+        set_prog(100, "Error: TIINGO_TOKEN environment variable not set.")
+        return
 
-    bench = download_batch([BENCHMARK])
-    bench_score = composite(bench[BENCHMARK]) if BENCHMARK in bench else 0.0
+    set_prog(0, "Fetching ticker list…")
+    df   = get_tickers()
+    syms = df["sym"].tolist()
+    set_prog(3, f"Got {len(syms)} tickers. Fetching benchmark (SPY)…")
+
+    bench_data  = fetch_tiingo_batch([BENCHMARK])
+    bench_score = composite(bench_data[BENCHMARK]) if BENCHMARK in bench_data else 0.0
+    log.info(f"SPY benchmark score: {bench_score:.4f}")
 
     scores, prices = {}, {}
-    batches = [syms[i:i+BATCH] for i in range(0, len(syms), BATCH)]
+    total    = len(syms)
+    ok_count = 0
+
+    batches = [syms[i:i+BATCH] for i in range(0, total, BATCH)]
     n = len(batches)
 
     for i, batch in enumerate(batches):
-        pct_done = 3 + (i/n)*86
-        set_prog(pct_done, f"Batch {i+1}/{n}  ({len(batch)} tickers)…")
-        data = download_batch(batch)
-        for sym, c in data.items():
-            scores[sym] = composite(c)
+        pct_done = 3 + (i / n) * 86
+        set_prog(pct_done, f"Batch {i+1}/{n}  (✓{ok_count} rated so far)…")
+
+        data = fetch_tiingo_batch(batch)
+
+        for sym, closes in data.items():
+            scores[sym] = composite(closes)
             prices[sym] = {
-                "price": round(float(c.iloc[-1]), 2),
-                "d1":  round(pct(c,1)*100,   2),
-                "m1":  round(pct(c,21)*100,  2),
-                "m3":  round(pct(c,63)*100,  2),
-                "y1":  round(pct(c,252)*100, 2),
+                "price": round(float(closes.iloc[-1]), 2),
+                "d1":  round(pct(closes, 1)   * 100, 2),
+                "m1":  round(pct(closes, 21)  * 100, 2),
+                "m3":  round(pct(closes, 63)  * 100, 2),
+                "y1":  round(pct(closes, 252) * 100, 2),
             }
+            ok_count += 1
+
+        # Tiingo free tier: ~50 requests/hour per token
+        # Each batch of 50 = 50 requests, so pause between batches
         time.sleep(2)
 
-    set_prog(90, "Ranking…")
+    set_prog(90, f"Ranking {ok_count} stocks…")
+    if ok_count == 0:
+        set_prog(100, "Error: no data returned from Tiingo. Check your API token.")
+        return
+
     series = pd.Series(scores).dropna()
     ranked = (series.rank(pct=True)*98+1).clip(1,99).round(0).astype(int)
     spy_pct = float((series < bench_score).mean()*98+1)
@@ -171,7 +217,7 @@ def _do_refresh():
         r = info.loc[sym] if sym in info.index else pd.Series({"name":"","exch":""})
         p = prices.get(sym, {})
         rows.append((sym, r.get("name",""), r.get("exch",""),
-                     int(rs), round(float(rs)-spy_pct,1),
+                     int(rs), round(float(rs)-spy_pct, 1),
                      p.get("price"), p.get("d1"), p.get("m1"),
                      p.get("m3"),    p.get("y1"),  now))
 
